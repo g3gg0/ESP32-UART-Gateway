@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32-C3 UART Gateway WebSerial Config</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+
+        .section {
+            margin-bottom: 25px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #667eea;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: #333;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        select,
+        input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        select:focus,
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        input[type="number"] {
+            font-family: 'Courier New', monospace;
+        }
+
+        .gpio-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .status-box {
+            background: #f5f5f5;
+            border-left: 4px solid #667eea;
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 15px;
+            font-family: 'Courier New', monospace;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .status-box.error {
+            border-left-color: #e74c3c;
+            background: #ffe6e6;
+            color: #c0392b;
+        }
+
+        .status-box.success {
+            border-left-color: #27ae60;
+            background: #e6ffe6;
+            color: #27ae60;
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .btn-secondary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #1565c0;
+            margin-top: 20px;
+            line-height: 1.6;
+        }
+
+        .packet-preview {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: 'Courier New', monospace;
+            color: #555;
+            margin-bottom: 15px;
+            word-break: break-all;
+            line-height: 1.5;
+        }
+
+        .packet-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 6px;
+        }
+
+        .warning {
+            color: #f39c12;
+            font-size: 12px;
+        }
+
+        .connected {
+            color: #27ae60;
+            font-weight: 600;
+        }
+
+        .disconnected {
+            color: #e74c3c;
+            font-weight: 600;
+        }
+
+        #configSection {
+            display: none !important;
+        }
+
+        #configSection.visible {
+            display: block !important;
+        }
+
+        #actionsSection {
+            display: none !important;
+        }
+
+        #actionsSection.visible {
+            display: block !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>UART Gateway Config</h1>
+        <p class="subtitle">Configure ESP32-C3 UART</p>
+
+        <!-- Connection Status -->
+        <div class="section">
+            <div class="section-title">Connection</div>
+            <button class="btn-primary" id="connectBtn" onclick="connectDevice()">Connect Device</button>
+            <button class="btn-secondary" id="disconnectBtn" onclick="disconnectDevice()" disabled
+                style="margin-top: 10px;">Disconnect</button>
+            <div class="status-box" id="statusBox">
+                <span id="statusText" class="disconnected">Not Connected</span>
+            </div>
+        </div>
+
+        <!-- Configuration -->
+        <div class="section" id="configSection">
+            <div class="section-title">Configuration</div>
+
+            <div class="form-group">
+                <label for="baudRate">Baud Rate</label>
+                <select id="baudRate">
+                    <option value="300">300</option>
+                    <option value="600">600</option>
+                    <option value="1200">1200</option>
+                    <option value="2400">2400</option>
+                    <option value="4800">4800</option>
+                    <option value="9600">9600</option>
+                    <option value="19200">19200</option>
+                    <option value="38400">38400</option>
+                    <option value="57600">57600</option>
+                    <option value="115200" selected>115200</option>
+                    <option value="230400">230400</option>
+                    <option value="460800">460800</option>
+                    <option value="921600">921600</option>
+                </select>
+            </div>
+
+            <div class="gpio-grid">
+                <div class="form-group">
+                    <label for="txGpio">TX GPIO Pin</label>
+                    <select id="txGpio">
+                        <option value="0">GPIO 0</option>
+                        <option value="1">GPIO 1</option>
+                        <option value="2">GPIO 2</option>
+                        <option value="3">GPIO 3</option>
+                        <option value="4">GPIO 4</option>
+                        <option value="5">GPIO 5</option>
+                        <option value="6">GPIO 6</option>
+                        <option value="7">GPIO 7</option>
+                        <option value="8">GPIO 8</option>
+                        <option value="9">GPIO 9</option>
+                        <option value="10">GPIO 10</option>
+                        <option value="19">GPIO 19</option>
+                        <option value="20" selected>GPIO 20</option>
+                        <option value="21">GPIO 21</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="rxGpio">RX GPIO Pin</label>
+                    <select id="rxGpio">
+                        <option value="0">GPIO 0</option>
+                        <option value="1">GPIO 1</option>
+                        <option value="2">GPIO 2</option>
+                        <option value="3">GPIO 3</option>
+                        <option value="4">GPIO 4</option>
+                        <option value="5">GPIO 5</option>
+                        <option value="6">GPIO 6</option>
+                        <option value="7">GPIO 7</option>
+                        <option value="8">GPIO 8</option>
+                        <option value="9">GPIO 9</option>
+                        <option value="10">GPIO 10</option>
+                        <option value="19">GPIO 19</option>
+                        <option value="20">GPIO 20</option>
+                        <option value="21" selected>GPIO 21</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="section" id="actionsSection">
+            <div class="button-group">
+                <button class="btn-primary" id="sendBtn" onclick="sendConfig()" disabled>Send Config</button>
+            </div>
+        </div>
+
+        <!-- Received Configuration -->
+        <div class="section">
+            <div class="section-title">Status</div>
+            <div class="status-box" id="receivedConfigBox"
+                style="border-left-color: #2196F3; background: #e3f2fd; color: #1565c0;">
+                <span id="receivedConfigText">Waiting for device response...</span>
+            </div>
+        </div>
+
+        <!-- Info -->
+        <div class="info-box">
+            <strong>ℹ️ How to use:</strong><br>
+            1. Click "Connect Device" and select your ESP32-C3<br>
+            2. Choose desired baud rate and GPIO pins<br>
+            3. Click "Send Config" to apply settings<br>
+            4. Check device logs to confirm configuration
+        </div>
+    </div>
+
+    <script>
+        let port = null;
+        let reader = null;
+        let lastSentConfig = null; // Track the last config we sent
+        let queryInterval = null; // Interval for querying config
+
+        /* Magic bytes: "UARTGW\x01\x00" repeated 2 times (16 bytes total) */
+        const MAGIC = new Uint8Array([
+            0x55, 0x41, 0x52, 0x54, 0x47, 0x57, 0x01, 0x00,
+            0x55, 0x41, 0x52, 0x54, 0x47, 0x57, 0x01, 0x00
+        ]);
+
+        function hexdump(data, prefix = '') {
+            const bytes = Array.from(data);
+            let output = prefix + ' (' + bytes.length + ' bytes):\n';
+
+            for (let i = 0; i < bytes.length; i += 16) {
+                /* Address */
+                const addr = i.toString(16).padStart(4, '0');
+                output += addr + ':  ';
+
+                /* Hex bytes */
+                let hexPart = '';
+                let asciiPart = '';
+                for (let j = 0; j < 16; j++) {
+                    if (i + j < bytes.length) {
+                        const byte = bytes[i + j];
+                        hexPart += byte.toString(16).padStart(2, '0') + ' ';
+                        asciiPart += (byte >= 32 && byte < 127) ? String.fromCharCode(byte) : '.';
+                    } else {
+                        hexPart += '   ';
+                        asciiPart += ' ';
+                    }
+                    if (j === 7) hexPart += ' ';
+                }
+
+                output += hexPart + ' |' + asciiPart + '|\n';
+            }
+
+            console.log(output);
+        }
+
+        function updateStatus(message, isError = false, isSuccess = false) {
+            const statusBox = document.getElementById('statusBox');
+            const statusText = document.getElementById('statusText');
+            statusText.textContent = message;
+            statusBox.classList.remove('error', 'success');
+            if (isError) statusBox.classList.add('error');
+            if (isSuccess) statusBox.classList.add('success');
+        }
+
+        function parseConfigPacket(packet) {
+            if (packet.length < 38) {
+                return null;
+            }
+
+            /* Check magic at start (16 bytes) */
+            let isMagic = true;
+            for (let i = 0; i < 16; i++) {
+                if (packet[i] !== MAGIC[i]) {
+                    isMagic = false;
+                    break;
+                }
+            }
+
+            if (!isMagic) {
+                return null;
+            }
+
+            /* Extract baud rate (little-endian) at offset 16 */
+            const baudRate = packet[16] |
+                (packet[17] << 8) |
+                (packet[18] << 16) |
+                (packet[19] << 24);
+
+            /* Extract GPIO pins */
+            const txGpio = packet[20];
+            const rxGpio = packet[21];
+
+            return {
+                baudRate: baudRate,
+                txGpio: txGpio,
+                rxGpio: rxGpio
+            };
+        }
+
+        function updateReceivedConfig(config) {
+            const elem = document.getElementById('receivedConfigText');
+            const box = document.getElementById('receivedConfigBox');
+            
+            if (config) {
+                // Check if received config matches the last sent config
+                const matches = lastSentConfig && 
+                    config.baudRate === lastSentConfig.baudRate &&
+                    config.txGpio === lastSentConfig.txGpio &&
+                    config.rxGpio === lastSentConfig.rxGpio;
+
+                if (matches) {
+                    // Show green checkmark for matching config
+                    elem.innerHTML = `<div style="text-align: center; font-size: 48px; color: #27ae60;">✓</div>
+                        <div style="text-align: center; margin-top: 10px;">Configuration Applied Successfully</div>
+                        <div style="text-align: center; font-size: 12px; margin-top: 8px;">Baud: ${config.baudRate} bps | TX: GPIO${config.txGpio} | RX: GPIO${config.rxGpio}</div>`;
+                    box.style.borderLeftColor = '#27ae60';
+                    box.style.background = '#e6ffe6';
+                    box.style.color = '#27ae60';
+                } else if (!lastSentConfig) {
+                    // This is a query response, update the form
+                    elem.textContent = `Current Device Config\nBaud: ${config.baudRate} bps\nTX GPIO: ${config.txGpio}\nRX GPIO: ${config.rxGpio}`;
+                    box.style.borderLeftColor = '#2196F3';
+                    box.style.background = '#e3f2fd';
+                    box.style.color = '#1565c0';
+                    
+                    // Update dropdowns with device values
+                    document.getElementById('baudRate').value = config.baudRate;
+                    document.getElementById('txGpio').value = config.txGpio;
+                    document.getElementById('rxGpio').value = config.rxGpio;
+                    console.log('Updated form with device config:', config);
+                    
+                    // Show Configuration and Actions sections
+                    document.getElementById('configSection').classList.add('visible');
+                    document.getElementById('actionsSection').classList.add('visible');
+                    console.log('Configuration section shown');
+                    
+                    // Stop the query interval since we got a response
+                    if (queryInterval) {
+                        clearInterval(queryInterval);
+                        queryInterval = null;
+                        console.log('Query interval stopped - response received');
+                    }
+                } else {
+                    // Show config but without the checkmark (unexpected config)
+                    elem.textContent = `Device Config Received\nBaud: ${config.baudRate} bps\nTX GPIO: ${config.txGpio}\nRX GPIO: ${config.rxGpio}`;
+                    box.style.borderLeftColor = '#2196F3';
+                    box.style.background = '#e3f2fd';
+                    box.style.color = '#1565c0';
+                }
+            } else {
+                elem.textContent = 'Invalid configuration packet received';
+                box.style.borderLeftColor = '#e74c3c';
+                box.style.background = '#ffe6e6';
+                box.style.color = '#c0392b';
+            }
+        }
+
+        function updatePreview() {
+            // Preview removed - no longer needed
+        }
+
+        function buildConfigPacket(baudRate, txGpio, rxGpio) {
+            const packet = new Uint8Array(38);
+
+            /* Copy magic bytes (16 bytes) */
+            packet.set(MAGIC, 0);
+
+            /* Write baud rate (little-endian uint32) at offset 16 */
+            packet[16] = baudRate & 0xFF;
+            packet[17] = (baudRate >> 8) & 0xFF;
+            packet[18] = (baudRate >> 16) & 0xFF;
+            packet[19] = (baudRate >> 24) & 0xFF;
+
+            /* Write TX GPIO at offset 20 */
+            packet[20] = txGpio & 0xFF;
+
+            /* Write RX GPIO at offset 21 */
+            packet[21] = rxGpio & 0xFF;
+
+            /* Write inverted magic bytes at offset 22 (16 bytes) */
+            for (let i = 0; i < 16; i++) {
+                packet[22 + i] = MAGIC[i] ^ 0xFF;
+            }
+
+            return packet;
+        }
+
+        async function connectDevice() {
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+
+                updateStatus('Connected, waiting for device response...', false, true);
+                console.log('Connected to:', port.getInfo());
+
+                /* Start reading from port */
+                readFromPort();
+
+                /* Send query packet repeatedly until response (baud=0) */
+                const sendQuery = async () => {
+                    if (!port) return;
+                    try {
+                        const queryPacket = buildConfigPacket(0, 0, 0);  // baud=0 means query
+                        hexdump(queryPacket, '>>> SENDING CONFIG QUERY');
+                        console.log('Querying device for current config...');
+                        
+                        const writer = port.writable.getWriter();
+                        await writer.write(queryPacket);
+                        writer.releaseLock();
+                        
+                        console.log('Config query sent, waiting for response...');
+                    } catch (err) {
+                        console.error('Query send error:', err);
+                    }
+                };
+                
+                // Send first query after 500ms, then repeat every 500ms until response
+                setTimeout(() => {
+                    sendQuery();  // Send immediately
+                    queryInterval = setInterval(sendQuery, 500);  // Then repeat every 500ms
+                }, 500);  // Wait 500ms after connection before starting
+            } catch (err) {
+                updateStatus('Connection failed: ' + err.message, true);
+                console.error('Connection error:', err);
+            }
+        }
+
+        async function disconnectDevice() {
+            try {
+                // Stop query interval if running
+                if (queryInterval) {
+                    clearInterval(queryInterval);
+                    queryInterval = null;
+                }
+                
+                if (reader) {
+                    await reader.cancel();
+                    reader = null;
+                }
+                if (port) {
+                    await port.close();
+                    port = null;
+                }
+
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('sendBtn').disabled = true;
+
+                updateStatus('Disconnected', false);
+                console.log('Disconnected from device');
+            } catch (err) {
+                updateStatus('Disconnect error: ' + err.message, true);
+                console.error('Disconnect error:', err);
+            }
+        }
+
+        async function readFromPort() {
+            if (!port) return;
+
+            try {
+                /* Use raw binary reader instead of text decoder */
+                reader = port.readable.getReader();
+                const buffer = [];
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    if (value) {
+                        /* Hexdump received data */
+                        hexdump(value, '<<< RECEIVED');
+
+                        /* Add bytes to buffer */
+                        for (let i = 0; i < value.length; i++) {
+                            buffer.push(value[i]);
+                        }
+
+                        /* Check if we have a complete packet (38 bytes) */
+                        if (buffer.length >= 38) {
+                            /* Try to parse config packet from buffer */
+                            let packetFound = false;
+                            for (let i = 0; i <= buffer.length - 38; i++) {
+                                const packet = new Uint8Array(buffer.slice(i, i + 38));
+                                const config = parseConfigPacket(packet);
+                                if (config) {
+                                    console.log('✓ Config packet parsed:', config);
+                                    hexdump(packet, '>>> CONFIG RESPONSE');
+                                    updateReceivedConfig(config);
+                                    /* Remove processed bytes from buffer */
+                                    buffer.splice(0, i + 38);
+                                    packetFound = true;
+                                    break;
+                                }
+                            }
+
+                            /* Remove non-config data (likely logs with ANSI codes) */
+                            /* If buffer starts with ANSI escape (0x1b) or is printable ASCII (0x20-0x7e) */
+                            /* and we haven't found a packet, skip to next possible packet start */
+                            if (!packetFound && buffer.length > 0) {
+                                const firstByte = buffer[0];
+                                /* ANSI escape code or ASCII text - skip single byte and look for next */
+                                if ((firstByte === 0x1b || (firstByte >= 0x20 && firstByte <= 0x7e))) {
+                                    /* Check if there's a 0x55 (start of MAGIC 'U') ahead */
+                                    let nextMagicPos = -1;
+                                    for (let i = 1; i < buffer.length; i++) {
+                                        if (buffer[i] === 0x55 && i + 37 < buffer.length) {
+                                            nextMagicPos = i;
+                                            break;
+                                        }
+                                    }
+                                    if (nextMagicPos > 0) {
+                                        /* Skip to potential packet start */
+                                        buffer.splice(0, nextMagicPos);
+                                    } else if (buffer.length > 200) {
+                                        /* Buffer too large and no packet found, discard old data */
+                                        buffer.splice(0, buffer.length - 37);
+                                    }
+                                }
+                            }
+                        }
+
+                        console.log('Received', value.length, 'bytes, buffer size:', buffer.length);
+                    }
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    updateStatus('Read error: ' + err.message, true);
+                    console.error('Read error:', err);
+                }
+            }
+        }
+
+        async function sendConfig() {
+            if (!port) {
+                updateStatus('Not connected', true);
+                return;
+            }
+
+            try {
+                const baudRate = parseInt(document.getElementById('baudRate').value);
+                const txGpio = parseInt(document.getElementById('txGpio').value);
+                const rxGpio = parseInt(document.getElementById('rxGpio').value);
+
+                /* Validate GPIO pins are different */
+                if (txGpio === rxGpio) {
+                    updateStatus('TX and RX GPIO must be different', true);
+                    return;
+                }
+
+                const packet = buildConfigPacket(baudRate, txGpio, rxGpio);
+
+                /* Store the sent config for comparison */
+                lastSentConfig = { baudRate, txGpio, rxGpio };
+
+                /* Hexdump what we're about to send */
+                hexdump(packet, '>>> SENDING CONFIG');
+                console.log('Config:', { baudRate, txGpio, rxGpio });
+
+                const writer = port.writable.getWriter();
+                await writer.write(packet);
+                writer.releaseLock();
+
+                updateStatus(`Config sent: Baud=${baudRate}, TX=GPIO${txGpio}, RX=GPIO${rxGpio}`, false, true);
+            } catch (err) {
+                updateStatus('Send failed: ' + err.message, true);
+                console.error('Send error:', err);
+            }
+        }
+
+        /* Update preview on input changes - removed since preview is gone */
+        /* Initial preview - removed */
+
+        /* Check if WebSerial is available */
+        if (!navigator.serial) {
+            updateStatus('WebSerial API not supported in this browser', true);
+            document.getElementById('connectBtn').disabled = true;
+        }
+    </script>
+</body>
+
+</html>
