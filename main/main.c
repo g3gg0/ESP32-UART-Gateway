@@ -9,10 +9,19 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "uart_gateway.h"
+#include "led.h"
 #include <string.h>
 
 #define TAG "ESP32-UART"
 
+uartgw_config_t config = {
+    .baud_rate = UART_DEFAULT_BAUD,
+    .tx_gpio = UART_DEFAULT_TX_GPIO,
+    .rx_gpio = UART_DEFAULT_RX_GPIO,
+    .reset_gpio = UART_DEFAULT_RESET_GPIO,
+    .control_gpio = UART_DEFAULT_CONTROL_GPIO,
+    .led_gpio = UART_DEFAULT_LED_GPIO,
+};
 
 static void initialize_nvs(void)
 {
@@ -27,12 +36,6 @@ static void initialize_nvs(void)
 
 void app_main()
 {
-    uartgw_config_t config = {
-        .baud_rate = UART_DEFAULT_BAUD,
-        .tx_gpio = UART_DEFAULT_TX_GPIO,
-        .rx_gpio = UART_DEFAULT_RX_GPIO,
-    };
-
     ESP_LOGI(TAG, "Starting UART Gateway");
 
     /* Initialize NVS */
@@ -54,6 +57,9 @@ void app_main()
 
     /* Initialize UART gateway (creates stream buffers) */
     uart_gateway_init(&config);
+
+    /* Initialize LED on configured GPIO */
+    led_init();
 
     /* Give USB CDC time to stabilize before tasks start processing */
     ESP_LOGI(TAG, "Waiting for USB CDC to stabilize...");

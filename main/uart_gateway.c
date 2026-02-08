@@ -1,4 +1,5 @@
 #include "uart_gateway.h"
+#include "led.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/uart.h"
@@ -10,12 +11,17 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #define TAG "UART_GATEWAY"
 #define NVS_NAMESPACE "uart_config"
 #define NVS_KEY_BAUD "baud_rate"
 #define NVS_KEY_TX_GPIO "tx_gpio"
 #define NVS_KEY_RX_GPIO "rx_gpio"
+#define NVS_KEY_RESET_GPIO "reset_gpio"
+#define NVS_KEY_CONTROL_GPIO "control_gpio"
+#define NVS_KEY_LED_GPIO "led_gpio"
 
 /* Magic bytes: pattern for config packet identification */
 const uint8_t uart_config_magic[UART_CONFIG_MAGIC_SIZE] = {
@@ -26,16 +32,29 @@ const uint8_t uart_config_magic[UART_CONFIG_MAGIC_SIZE] = {
     0x47,
     0x57,
     0x01,
-    0x00,
-    0x55,
-    0x41,
-    0x52,
+    0x00};
+
+/* Magic bytes: pattern for control packet identification */
+const uint8_t uart_control_magic[UART_CONTROL_MAGIC_SIZE] = {
+    0x43,
     0x54,
+    0x52,
+    0x4C,
     0x47,
     0x57,
     0x01,
-    0x00,
-};
+    0x00};
+
+/* Magic bytes: pattern for log message packet identification */
+const uint8_t uart_logmsg_magic[UART_LOGMSG_MAGIC_SIZE] = {
+    0x4C,
+    0x4F,
+    0x47,
+    0x4D,
+    0x53,
+    0x47,
+    0x01,
+    0x00};
 
 /* CDC buffer for data flow */
 #define CDC_BUFFER_SIZE 64
@@ -76,6 +95,14 @@ static uart_gateway_ctx_t gateway_ctx = {
     .config_callback = NULL,
     .cdc_to_uart_buffer = NULL,
     .uart_to_cdc_buffer = NULL,
+    .current_config = {
+        .baud_rate = UART_DEFAULT_BAUD,
+        .tx_gpio = UART_DEFAULT_TX_GPIO,
+        .rx_gpio = UART_DEFAULT_RX_GPIO,
+        .reset_gpio = UART_DEFAULT_RESET_GPIO,
+        .control_gpio = UART_DEFAULT_CONTROL_GPIO,
+        .led_gpio = UART_DEFAULT_LED_GPIO,
+    },
 };
 
 static void IRAM_ATTR send_current_config()
@@ -123,12 +150,62 @@ static void IRAM_ATTR on_config_changed(const uartgw_config_t *config)
     send_current_config();
 }
 
-/* Check if magic bytes match (normal or inverted) */
-static bool check_magic(const uint8_t *data, bool inverted)
+void send_message(const char *fmt, ...)
 {
-    for (int i = 0; i < UART_CONFIG_MAGIC_SIZE; i++)
+    if (fmt == NULL)
     {
-        if (data[i] != (uart_config_magic[i] ^ ((inverted) ? 0xFF : 0x00)))
+        ESP_LOGE(TAG, "send_message: fmt is NULL");
+        return;
+    }
+
+    if (gateway_ctx.uart_to_cdc_buffer == NULL)
+    {
+        ESP_LOGE(TAG, "send_message: UART->CDC buffer not initialized");
+        return;
+    }
+
+    char message[UART_LOGMSG_MAX_LEN];
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+
+    if (written < 0)
+    {
+        ESP_LOGE(TAG, "send_message: vsnprintf failed");
+        return;
+    }
+
+    size_t msg_len = (written >= (int)sizeof(message)) ? (sizeof(message) - 1) : (size_t)written;
+
+    uint8_t packet[UART_LOGMSG_HEADER_SIZE + UART_LOGMSG_MAX_LEN];
+    uart_logmsg_header_t header;
+    memcpy(header.magic, uart_logmsg_magic, UART_LOGMSG_MAGIC_SIZE);
+    header.length = (uint32_t)msg_len;
+    for (size_t i = 0; i < UART_LOGMSG_MAGIC_SIZE; i++)
+    {
+        header.inv_magic[i] = uart_logmsg_magic[i] ^ 0xFF;
+    }
+
+    memcpy(packet, &header, UART_LOGMSG_HEADER_SIZE);
+    if (msg_len > 0)
+    {
+        memcpy(packet + UART_LOGMSG_HEADER_SIZE, message, msg_len);
+    }
+
+    esp_err_t err = uart_gateway_queue_uart_data(packet, UART_LOGMSG_HEADER_SIZE + msg_len);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "send_message: failed to queue log packet: %s", esp_err_to_name(err));
+    }
+}
+
+/* Check if magic bytes match (normal or inverted) */
+static bool check_magic(const uint8_t *data, const uint8_t *magic, size_t magic_len, bool inverted)
+{
+    for (size_t i = 0; i < magic_len; i++)
+    {
+        if (data[i] != (magic[i] ^ ((inverted) ? 0xFF : 0x00)))
         {
             return false;
         }
@@ -137,20 +214,25 @@ static bool check_magic(const uint8_t *data, bool inverted)
 }
 
 /* Parse configuration packet */
-static bool parse_config_packet(const uint8_t *packet_data, uartgw_config_t *config)
+static bool parse_config_packet(const uint8_t *packet_data, size_t bytes_read, uartgw_config_t *config)
 {
+    if (bytes_read < UART_CONFIG_PACKET_SIZE)
+    {
+        return false;
+    }
+
     /* Cast to struct for easy access */
     const uart_config_packet_t *pkt = (const uart_config_packet_t *)packet_data;
 
     /* Check magic at start */
-    if (!check_magic(pkt->magic, false))
+    if (!check_magic(pkt->magic, uart_config_magic, UART_CONFIG_MAGIC_SIZE, false))
     {
         ESP_LOGW(TAG, "Config packet: magic mismatch at start");
         return false;
     }
 
     /* Check inverted magic at end */
-    if (!check_magic(pkt->inv_magic, true))
+    if (!check_magic(pkt->inv_magic, uart_config_magic, UART_CONFIG_MAGIC_SIZE, true))
     {
         ESP_LOGW(TAG, "Config packet: inverted magic mismatch");
         return false;
@@ -160,6 +242,9 @@ static bool parse_config_packet(const uint8_t *packet_data, uartgw_config_t *con
     uint32_t baud = pkt->baud_rate;
     uint8_t tx_gpio = pkt->tx_gpio;
     uint8_t rx_gpio = pkt->rx_gpio;
+    uint8_t reset_gpio = pkt->reset_gpio;
+    uint8_t control_gpio = pkt->control_gpio;
+    uint8_t led_gpio = pkt->led_gpio;
 
     /* Validate parameters (baud_rate == 0 is query mode, allowed) */
     if (baud != 0)
@@ -176,6 +261,12 @@ static bool parse_config_packet(const uint8_t *packet_data, uartgw_config_t *con
             return false;
         }
 
+        if ((reset_gpio > 43 && reset_gpio != 0xFF) || (control_gpio > 43 && control_gpio != 0xFF) || (led_gpio > 43 && led_gpio != 0xFF))
+        {
+            ESP_LOGW(TAG, "Invalid GPIO pins: RESET=%u, CONTROL=%u, LED=%u", reset_gpio, control_gpio, led_gpio);
+            return false;
+        }
+
         if (tx_gpio == rx_gpio)
         {
             ESP_LOGW(TAG, "TX and RX pins cannot be the same");
@@ -186,12 +277,104 @@ static bool parse_config_packet(const uint8_t *packet_data, uartgw_config_t *con
     config->baud_rate = baud;
     config->tx_gpio = tx_gpio;
     config->rx_gpio = rx_gpio;
+    config->reset_gpio = reset_gpio;
+    config->control_gpio = control_gpio;
+    config->led_gpio = led_gpio;
 
     return true;
 }
 
+/* Parse control packet and execute command */
+static bool parse_control_packet(const uint8_t *packet_data, size_t bytes_read)
+{
+    if (bytes_read < UART_CONTROL_PACKET_SIZE)
+    {
+        return false;
+    }
+
+    /* Cast to struct for easy access */
+    const uart_control_packet_t *pkt = (const uart_control_packet_t *)packet_data;
+
+    /* Check magic at start */
+    if (!check_magic(pkt->magic, uart_control_magic, UART_CONTROL_MAGIC_SIZE, false))
+    {
+        return false;
+    }
+
+    /* Check inverted magic at end */
+    if (!check_magic(pkt->inv_magic, uart_control_magic, UART_CONTROL_MAGIC_SIZE, true))
+    {
+        return false;
+    }
+
+    /* Parse command string */
+    char cmd[UART_CONTROL_CMD_SIZE + 1] = {0};
+    memcpy(cmd, pkt->command, UART_CONTROL_CMD_SIZE);
+
+    /* Ensure null termination */
+    cmd[UART_CONTROL_CMD_SIZE] = '\0';
+
+    /* Parse R:x (Reset control) */
+    if (cmd[0] == 'R' && cmd[1] == ':')
+    {
+        /* Check if reset GPIO is configured (not 0xFF) */
+        if (gateway_ctx.current_config.reset_gpio == 0xFF)
+        {
+            send_message("Reset GPIO not configured (0xFF), ignoring R: command");
+            return false;
+        }
+
+        /* Set reset line state */
+        gpio_set_level(gateway_ctx.current_config.reset_gpio, (cmd[2] == '0') ? 0 : 1);
+        return true;
+    }
+    /* Parse C:x (Control pin) */
+    else if (cmd[0] == 'C' && cmd[1] == ':')
+    {
+        /* Check if control GPIO is configured (not 0xFF) */
+        if (gateway_ctx.current_config.control_gpio == 0xFF)
+        {
+            send_message("Control GPIO not configured (0xFF), ignoring C: command");
+            return false;
+        }
+
+        gpio_set_level(gateway_ctx.current_config.control_gpio, (cmd[2] == '0') ? 0 : 1);
+        return true;
+    }
+    /* Parse B:xx (Break condition) */
+    else if (cmd[0] == 'B' && cmd[1] == ':')
+    {
+        int brk_len = atoi(&cmd[2]);
+
+        if (!gateway_ctx.is_configured)
+        {
+            send_message("UART not configured, cannot send break");
+            return false;
+        }
+
+        if (brk_len < 0 || brk_len > 1000000)
+        {
+            send_message("Invalid break length: %d", brk_len);
+            return false;
+        }
+
+        /* Send break condition (empty data with break signal) */
+        int ret = uart_write_bytes_with_break(gateway_ctx.uart_num, "", 1, brk_len);
+        if (ret < 0)
+        {
+            send_message("Failed to send break: %d", ret);
+        }
+        return true;
+    }
+    else
+    {
+        send_message("Unknown control command: '%s'", cmd);
+        return false;
+    }
+}
+
 /* Initialize all unused GPIO pins to GND with strong drive strength */
-static void init_unused_gpios_to_gnd(uint8_t tx_gpio, uint8_t rx_gpio)
+static void init_unused_gpios_to_gnd(uint8_t tx_gpio, uint8_t rx_gpio, uint8_t reset_gpio, uint8_t control_gpio, uint8_t led_gpio)
 {
     /* ESP32-C3 has GPIO 0-21 usable */
     /* GPIO 18, 19 are used by USB (D- and D+), NEVER configure these */
@@ -202,14 +385,14 @@ static void init_unused_gpios_to_gnd(uint8_t tx_gpio, uint8_t rx_gpio)
     static const uint8_t gpio_pins[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21};
     static const size_t num_pins = sizeof(gpio_pins) / sizeof(gpio_pins[0]);
 
-    ESP_LOGI(TAG, "Configuring unused GPIO pins to GND (excluding TX=%u, RX=%u)", tx_gpio, rx_gpio);
+    ESP_LOGI(TAG, "Configuring unused GPIO pins to GND (excluding TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u)", tx_gpio, rx_gpio, reset_gpio, control_gpio, led_gpio);
 
     for (size_t i = 0; i < num_pins; i++)
     {
         uint8_t pin = gpio_pins[i];
 
-        /* Skip TX and RX pins */
-        if (pin == tx_gpio || pin == rx_gpio)
+        /* Skip TX, RX, RESET, CONTROL, and LED pins */
+        if (pin == tx_gpio || pin == rx_gpio || pin == reset_gpio || pin == control_gpio || pin == led_gpio)
         {
             ESP_LOGD(TAG, "Skipping GPIO %u (in use)", pin);
             continue;
@@ -243,6 +426,50 @@ static void init_unused_gpios_to_gnd(uint8_t tx_gpio, uint8_t rx_gpio)
     ESP_LOGI(TAG, "Unused GPIO pins configured to GND (USB pins 18,19 preserved, flash pins 11-17 preserved)");
 }
 
+static esp_err_t reconfigure_gpio(const uartgw_config_t *config)
+{
+    if (config->led_gpio != 0xFF)
+    {
+        gpio_config_t io_conf = {
+            .pin_bit_mask = (1ULL << config->led_gpio),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+
+        gpio_config(&io_conf);
+    }
+
+    if (config->control_gpio != 0xFF)
+    {
+        gpio_config_t io_conf = {
+            .pin_bit_mask = (1ULL << config->control_gpio),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+
+        gpio_config(&io_conf);
+    }
+
+    if (config->reset_gpio != 0xFF)
+    {
+        gpio_config_t io_conf = {
+            .pin_bit_mask = (1ULL << config->reset_gpio),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+
+        gpio_config(&io_conf);
+    }
+
+    return ESP_OK;
+}
+
 /* Reconfigure UART with new pins and baud rate */
 static esp_err_t reconfigure_uart(const uartgw_config_t *config)
 {
@@ -252,9 +479,6 @@ static esp_err_t reconfigure_uart(const uartgw_config_t *config)
         uart_driver_delete(gateway_ctx.uart_num);
         gateway_ctx.is_configured = false;
     }
-
-    /* Initialize all unused GPIO pins to GND with strong drive */
-    init_unused_gpios_to_gnd(config->tx_gpio, config->rx_gpio);
 
     /* Configure UART parameters */
     uart_config_t uart_hw_config = {
@@ -328,8 +552,13 @@ void uart_gateway_init(const uartgw_config_t *config)
         }
     }
 
+    ESP_LOGI(TAG, "Initializing GPIOs...");
+    reconfigure_gpio(config);
     ESP_LOGI(TAG, "Initializing UART gateway...");
     reconfigure_uart(config);
+
+    /* Initialize all unused GPIO pins to GND with strong drive */
+    init_unused_gpios_to_gnd(config->tx_gpio, config->rx_gpio, config->reset_gpio, config->control_gpio, config->led_gpio);
 
     gateway_ctx.is_initializing = false;
 }
@@ -351,8 +580,12 @@ esp_err_t uart_gateway_configure(const uartgw_config_t *config)
     {
         return ESP_ERR_INVALID_STATE;
     }
+    reconfigure_gpio(config);
+    reconfigure_uart(config);
+    /* Initialize all unused GPIO pins to GND with strong drive */
+    init_unused_gpios_to_gnd(config->tx_gpio, config->rx_gpio, config->reset_gpio, config->control_gpio, config->led_gpio);
 
-    return reconfigure_uart(config);
+    return ESP_OK;
 }
 
 void uart_gateway_get_config(uartgw_config_t *config)
@@ -421,11 +654,8 @@ int uart_gateway_receive(uint8_t *buffer, size_t max_length)
         return 0;
     }
 
-    int bytes_read = uart_read_bytes(gateway_ctx.uart_num, buffer, max_length, pdMS_TO_TICKS(100));
-    if (bytes_read > 0)
-    {
-        ESP_LOGD(TAG, "UART recv: read %d bytes", bytes_read);
-    }
+    int bytes_read = uart_read_bytes(gateway_ctx.uart_num, buffer, max_length, pdMS_TO_TICKS(10));
+    
     return bytes_read;
 }
 
@@ -482,16 +712,46 @@ esp_err_t uart_gateway_save_config(void)
         return err;
     }
 
+    /* Save Reset GPIO */
+    err = nvs_set_u8(nvs_handle, NVS_KEY_RESET_GPIO, gateway_ctx.current_config.reset_gpio);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to save Reset GPIO: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    /* Save Control GPIO */
+    err = nvs_set_u8(nvs_handle, NVS_KEY_CONTROL_GPIO, gateway_ctx.current_config.control_gpio);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to save Control GPIO: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    /* Save LED GPIO */
+    err = nvs_set_u8(nvs_handle, NVS_KEY_LED_GPIO, gateway_ctx.current_config.led_gpio);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to save LED GPIO: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
     /* Commit changes */
     err = nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
 
     if (err == ESP_OK)
     {
-        ESP_LOGI(TAG, "Configuration saved to NVS: baud=%lu, TX=%u, RX=%u",
+        ESP_LOGI(TAG, "Configuration saved to NVS: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u",
                  gateway_ctx.current_config.baud_rate,
                  gateway_ctx.current_config.tx_gpio,
-                 gateway_ctx.current_config.rx_gpio);
+                 gateway_ctx.current_config.rx_gpio,
+                 gateway_ctx.current_config.reset_gpio,
+                 gateway_ctx.current_config.control_gpio,
+                 gateway_ctx.current_config.led_gpio);
     }
     else
     {
@@ -544,6 +804,51 @@ esp_err_t uart_gateway_load_config(uartgw_config_t *loaded_config)
         return err;
     }
 
+    /* Load Reset GPIO (optional, use default if not found) */
+    err = nvs_get_u8(nvs_handle, NVS_KEY_RESET_GPIO, &loaded_config->reset_gpio);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        loaded_config->reset_gpio = UART_DEFAULT_RESET_GPIO;
+        ESP_LOGI(TAG, "Reset GPIO not in NVS, using default: %u", UART_DEFAULT_RESET_GPIO);
+        err = ESP_OK;
+    }
+    else if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to load Reset GPIO: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    /* Load Control GPIO (optional, use default if not found) */
+    err = nvs_get_u8(nvs_handle, NVS_KEY_CONTROL_GPIO, &loaded_config->control_gpio);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        loaded_config->control_gpio = UART_DEFAULT_CONTROL_GPIO;
+        ESP_LOGI(TAG, "Control GPIO not in NVS, using default: %u", UART_DEFAULT_CONTROL_GPIO);
+        err = ESP_OK;
+    }
+    else if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to load Control GPIO: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    /* Load LED GPIO (optional, use default if not found) */
+    err = nvs_get_u8(nvs_handle, NVS_KEY_LED_GPIO, &loaded_config->led_gpio);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        loaded_config->led_gpio = UART_DEFAULT_LED_GPIO;
+        ESP_LOGI(TAG, "LED GPIO not in NVS, using default: %u", UART_DEFAULT_LED_GPIO);
+        err = ESP_OK;
+    }
+    else if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to load LED GPIO: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
     nvs_close(nvs_handle);
 
     return err;
@@ -566,6 +871,9 @@ void uart_gateway_build_response_packet(uint8_t *packet, size_t *packet_len)
     pkt->baud_rate = gateway_ctx.current_config.baud_rate;
     pkt->tx_gpio = gateway_ctx.current_config.tx_gpio;
     pkt->rx_gpio = gateway_ctx.current_config.rx_gpio;
+    pkt->reset_gpio = gateway_ctx.current_config.reset_gpio;
+    pkt->control_gpio = gateway_ctx.current_config.control_gpio;
+    pkt->led_gpio = gateway_ctx.current_config.led_gpio;
 
     /* Fill inverted magic at end */
     for (int i = 0; i < UART_CONFIG_MAGIC_SIZE; i++)
@@ -575,10 +883,13 @@ void uart_gateway_build_response_packet(uint8_t *packet, size_t *packet_len)
 
     *packet_len = UART_CONFIG_PACKET_SIZE;
 
-    ESP_LOGI(TAG, "Response packet built: baud=%lu, TX=%u, RX=%u",
+    ESP_LOGI(TAG, "Response packet built: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u",
              gateway_ctx.current_config.baud_rate,
              gateway_ctx.current_config.tx_gpio,
-             gateway_ctx.current_config.rx_gpio);
+             gateway_ctx.current_config.rx_gpio,
+             gateway_ctx.current_config.reset_gpio,
+             gateway_ctx.current_config.control_gpio,
+             gateway_ctx.current_config.led_gpio);
 }
 
 /* Queue data from CDC to UART */
@@ -654,7 +965,8 @@ int uart_gateway_receive_uart_queue(uint8_t *buffer, size_t max_length)
 /* Task: Read from USB CDC, queue to UART */
 static void cdc_read_task(void *pvParameters)
 {
-    size_t bytes_read;
+    int bytes_read;
+    uartgw_config_t new_config;
 
     ESP_LOGI(TAG, "CDC read task started");
 
@@ -671,21 +983,39 @@ static void cdc_read_task(void *pvParameters)
         }
 
         /* Read from USB CDC with timeout */
-        bytes_read = usb_serial_jtag_read_bytes(cdc_read_buffer, CDC_BUFFER_SIZE, pdMS_TO_TICKS(20));
+        bytes_read = usb_serial_jtag_read_bytes(cdc_read_buffer, CDC_BUFFER_SIZE, pdMS_TO_TICKS(10));
 
         if (bytes_read <= 0)
         {
             continue;
         }
-        ESP_LOGI(TAG, "CDC: received %zu bytes", bytes_read);
 
-        /* Check if this is a config packet (exactly 38 bytes) */
-        if (bytes_read == UART_CONFIG_PACKET_SIZE)
+        if (bytes_read > (int)CDC_BUFFER_SIZE)
         {
-            ESP_LOGI(TAG, "CDC: config packet (%u bytes), processing...", UART_CONFIG_PACKET_SIZE);
+            bytes_read = (int)CDC_BUFFER_SIZE;
+        }
 
-            uartgw_config_t new_config;
-            if (parse_config_packet(cdc_read_buffer, &new_config))
+        /* Ensure all available data is read in case we were interrupted.
+         * Never read beyond the remaining space in cdc_read_buffer.
+         */
+        if (bytes_read < (int)CDC_BUFFER_SIZE)
+        {
+            const uint32_t remaining = (uint32_t)(CDC_BUFFER_SIZE - (size_t)bytes_read);
+            int bytes_read_2 = usb_serial_jtag_read_bytes(&cdc_read_buffer[bytes_read], remaining, pdMS_TO_TICKS(10));
+            if (bytes_read_2 > 0)
+            {
+                if (bytes_read + bytes_read_2 > (int)CDC_BUFFER_SIZE)
+                {
+                    bytes_read_2 = (int)CDC_BUFFER_SIZE - bytes_read;
+                }
+                bytes_read += bytes_read_2;
+            }
+        }
+
+        /* Check if this is a config packet */
+        if (bytes_read == 64)
+        {
+            if (parse_config_packet(cdc_read_buffer, bytes_read, &new_config))
             {
                 if (new_config.baud_rate == 0)
                 {
@@ -694,12 +1024,19 @@ static void cdc_read_task(void *pvParameters)
                     send_current_config();
                     continue;
                 }
-                ESP_LOGI(TAG, "✓ VALID CONFIG: baud=%lu, TX=%u, RX=%u", new_config.baud_rate, new_config.tx_gpio, new_config.rx_gpio);
+                ESP_LOGI(TAG, "CDC: VALID CONFIG: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u", new_config.baud_rate, new_config.tx_gpio, new_config.rx_gpio, new_config.reset_gpio, new_config.control_gpio, new_config.led_gpio);
                 uart_gateway_configure(&new_config);
+                continue;
+            }
+
+            if (parse_control_packet(cdc_read_buffer, bytes_read))
+            {
+                ESP_LOGI(TAG, "CDC: received control packet, processed accordingly");
                 continue;
             }
         }
 
+        led_signal_uart_activity();
         /* Non-config packets go to UART */
         uart_gateway_queue_cdc_data(cdc_read_buffer, bytes_read);
     }
@@ -732,6 +1069,7 @@ static void uart_write_task(void *pvParameters)
         }
 
         ESP_LOGI(TAG, "UART write: sending %d bytes to UART", bytes_to_send);
+        led_signal_uart_activity();
         esp_err_t ret = uart_gateway_send(uart_write_buffer, bytes_to_send);
         if (ret == ESP_OK)
         {
@@ -770,6 +1108,7 @@ static void uart_read_task(void *pvParameters)
             continue;
         }
         ESP_LOGI(TAG, "UART read: received %d bytes", bytes_received);
+        led_signal_uart_activity();
 
         esp_err_t ret = uart_gateway_queue_uart_data(uart_read_buffer, bytes_received);
         if (ret == ESP_OK)
@@ -822,6 +1161,7 @@ static void cdc_write_task(void *pvParameters)
         }
 
         ESP_LOGI(TAG, "CDC write: sending %d bytes to CDC", bytes_to_send);
+        led_signal_uart_activity();
         int written = usb_serial_jtag_write_bytes(cdc_write_buffer, bytes_to_send, pdMS_TO_TICKS(1000));
         if (written < bytes_to_send)
         {
