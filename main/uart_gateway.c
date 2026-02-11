@@ -105,6 +105,9 @@ static uart_gateway_ctx_t gateway_ctx = {
     },
 };
 
+
+static esp_err_t reconfigure_uart(const uartgw_config_t *config);
+
 static void IRAM_ATTR send_current_config()
 {
     /* Queue the config response to be sent by cdc_write_task */
@@ -352,18 +355,31 @@ static bool parse_control_packet(const uint8_t *packet_data, size_t bytes_read)
             return false;
         }
 
-        if (brk_len < 0 || brk_len > 1000000)
+        gpio_set_level(gateway_ctx.current_config.tx_gpio, 1);
+        gpio_config_t io_conf = {
+            .pin_bit_mask = (1ULL << gateway_ctx.current_config.tx_gpio),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+
+        gpio_config(&io_conf);
+        gpio_set_level(gateway_ctx.current_config.tx_gpio, 0);
+
+        if(brk_len < 20)
         {
-            send_message("Invalid break length: %d", brk_len);
-            return false;
+            esp_rom_delay_us(brk_len * 1000);
+        }
+        else
+        {
+            vTaskDelay(pdMS_TO_TICKS(brk_len));            
         }
 
-        /* Send break condition (empty data with break signal) */
-        int ret = uart_write_bytes_with_break(gateway_ctx.uart_num, "", 1, brk_len);
-        if (ret < 0)
-        {
-            send_message("Failed to send break: %d", ret);
-        }
+        gpio_set_level(gateway_ctx.current_config.tx_gpio, 1);
+
+        reconfigure_uart(&gateway_ctx.current_config);
+
         return true;
     }
     else

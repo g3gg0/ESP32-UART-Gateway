@@ -1,0 +1,3306 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RevvoX CC3200 Console</title>
+    <script src="esp32-parser.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(circle at 20% 20%, #1f2937 0%, #0b1220 40%, #070b15 75%);
+            min-height: 100vh;
+            padding: 24px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #e5e7eb;
+        }
+
+        .container {
+            max-width: 1000px;
+            width: 100%;
+            background: linear-gradient(180deg, rgba(31, 41, 55, 0.9), rgba(15, 23, 42, 0.95));
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 90vh;
+        }
+
+        .header {
+            background: linear-gradient(90deg, #1e3a8a, #0f172a);
+            padding: 20px;
+            border-bottom: 2px solid #3b82f6;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 15px;
+        }
+
+        .connection-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-primary,
+        .btn-secondary {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn-primary:disabled {
+            background: #6b7280;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #4b5563;
+        }
+
+        .btn-secondary:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .connection-status {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            background: #ef4444;
+            color: white;
+        }
+
+        .connection-status.connected {
+            background: #10b981;
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+            padding: 20px;
+            gap: 15px;
+        }
+
+        .console-display {
+            flex: 0 0 50%;
+            background: #0f172a;
+            border: 1px solid #374151;
+            border-radius: 6px;
+            padding: 12px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #a3e635;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+
+        .console-display::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .console-display::-webkit-scrollbar-track {
+            background: #1f2937;
+            border-radius: 4px;
+        }
+
+        .console-display::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+
+        .console-display::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+
+        .controls-section {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+            padding: 15px;
+            background: rgba(55, 65, 81, 0.3);
+            border-radius: 6px;
+        }
+
+        .gpio-controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .gpio-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .gpio-control input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .gpio-control label {
+            cursor: pointer;
+            user-select: none;
+            font-weight: 500;
+        }
+
+        .input-section {
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-section input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            background: #1f2937;
+            color: #e5e7eb;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .input-section input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .input-section button {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .input-section button:hover {
+            background: #2563eb;
+        }
+
+        .input-section button:active {
+            transform: scale(0.98);
+        }
+
+        .footer {
+            padding: 10px 20px;
+            border-top: 1px solid #374151;
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>RevvoX CC3200 Console</h1>
+            <div class="connection-controls">
+                <button class="btn-primary" id="connectBtn" onclick="connectDevice()">Connect</button>
+                <button class="btn-secondary" id="disconnectBtn" onclick="disconnectDevice()"
+                    disabled>Disconnect</button>
+                <button class="btn-secondary" id="loadFlashBtn" onclick="loadFlashImageFromFile()">Load Flash Image</button>
+                <button class="btn-secondary" id="clearBtn" onclick="clearConsole()">Clear</button>
+                <div class="connection-status" id="statusIndicator">Disconnected</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="controls-section" style="padding: 12px;">
+                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                    <div style="font-weight: 700; color: #e5e7eb;">CC3200 commands</div>
+
+                    <div id="ccTabsHeader" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+                    <div id="ccTabsBody" style="width: 100%;"></div>
+                </div>
+            </div>
+            <div class="console-display" id="consoleDisplay"></div>
+        </div>
+
+        <div class="footer">
+            Checkboxes: GPIO control | Break: Send break condition | Hex input: Space-separated bytes (e.g., DD EE AA)
+        </div>
+    </div>
+
+    <script>
+        /* ============= EspSerial Class ============= */
+        class EspSerial {
+            constructor() {
+                this.port = null;
+                this.reader = null;
+                this.rxBuffer = new Uint8Array(0);
+                this.inputDone = false;
+                this.receive_cbr = null; /* Backward-compat alias for data callback */
+                this.data_cbr = null; /* Raw UART-like bytes */
+                this.log_cbr = null; /* Parsed ESP log packets */
+
+                this.rxFlushTimer = null;
+                this.rxFlushTimeoutMs = 10;
+
+                /* LOG packet constants */
+                this.LOG_MAGIC = new Uint8Array([
+                    0x4C, 0x4F, 0x47, 0x4D, 0x53, 0x47, 0x01, 0x00
+                ]);
+                this.LOG_HEADER_SIZE = this.LOG_MAGIC.length + 4 + this.LOG_MAGIC.length;
+                this.LOG_INV_OFFSET = this.LOG_MAGIC.length + 4;
+                this.LOGMSG_MAX_LEN = 256;
+
+                /* CONTROL packet constants */
+                this.CTRL_MAGIC = new Uint8Array([
+                    0x43, 0x54, 0x52, 0x4C, 0x47, 0x57, 0x01, 0x00
+                ]);
+                this.CTRL_PACKET_SIZE = this.CTRL_MAGIC.length + 16 + this.CTRL_MAGIC.length;
+                this.CTRL_INV_OFFSET = this.CTRL_MAGIC.length + 16;
+                this.CTRL_PADDED_SIZE = 64;
+            }
+
+            _clearRxFlushTimer() {
+                if (this.rxFlushTimer) {
+                    clearTimeout(this.rxFlushTimer);
+                    this.rxFlushTimer = null;
+                }
+            }
+
+            _flushRxBufferAsData() {
+                if (!this.rxBuffer || this.rxBuffer.length === 0) {
+                    return;
+                }
+
+                try {
+                    const chunk = this.rxBuffer;
+                    this.rxBuffer = new Uint8Array(0);
+                    if (this.data_cbr) {
+                        this.data_cbr(chunk);
+                    }
+                } finally {
+                    this._clearRxFlushTimer();
+                }
+            }
+
+            _armRxFlushTimer() {
+                this._clearRxFlushTimer();
+                this.rxFlushTimer = setTimeout(() => {
+                    this.rxFlushTimer = null;
+                    this._flushRxBufferAsData();
+                }, this.rxFlushTimeoutMs);
+            }
+
+            setReceiveCallback(callback) {
+                /* Compatibility: historical code used setReceiveCallback(packet) */
+                this.receive_cbr = callback;
+                this.data_cbr = callback;
+            }
+
+            setDataCallback(callback) {
+                this.data_cbr = callback;
+            }
+
+            setLogCallback(callback) {
+                this.log_cbr = callback;
+            }
+
+            async connect() {
+                try {
+                    this.port = await navigator.serial.requestPort();
+                    await this.port.open({ baudRate: 921600 });
+                    logToConsole('ESP Serial: Connected', 'info');
+                    return true;
+                } catch (err) {
+                    if (err.name !== 'NotFoundError') {
+                        logToConsole(`ESP Serial: Connection error: ${err.message}`, 'info');
+                    }
+                    return false;
+                }
+            }
+
+            async disconnect() {
+                try {
+                    this.inputDone = true;
+
+                    this._clearRxFlushTimer();
+
+                    /* Release reader lock if it exists */
+                    if (this.reader) {
+                        try {
+                            this.reader.cancel();
+                        } catch (e) {
+                            /* Reader might already be released */
+                        }
+                        this.reader = null;
+                    }
+
+                    /* Wait a moment for read loop to exit */
+                    await new Promise(resolve => setTimeout(resolve, 50));
+
+                    if (this.port) {
+                        try {
+                            await this.port.close();
+                        } catch (e) {
+                            logToConsole(`Port close error: ${e.message}`, 'info');
+                        }
+                        this.port = null;
+                    }
+                    logToConsole('ESP Serial: Disconnected', 'info');
+                } catch (err) {
+                    logToConsole(`ESP Serial: Disconnect error: ${err.message}`, 'info');
+                }
+            }
+
+            appendBuffer(a, b) {
+                if (!a || a.length === 0) return new Uint8Array(b);
+                const out = new Uint8Array(a.length + b.length);
+                out.set(a, 0);
+                out.set(b, a.length);
+                return out;
+            }
+
+            checkMagic(buffer, offset, magic, inverted) {
+                for (let i = 0; i < magic.length; i++) {
+                    const expected = inverted ? (magic[i] ^ 0xFF) : magic[i];
+                    if (buffer[offset + i] !== expected) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            padTo64Bytes(packet) {
+                if (packet.length >= this.CTRL_PADDED_SIZE) {
+                    return packet;
+                }
+                const padded = new Uint8Array(this.CTRL_PADDED_SIZE);
+                padded.set(packet, 0);
+                return padded;
+            }
+
+            buildControlPacket(command) {
+                const packet = new Uint8Array(this.CTRL_PACKET_SIZE);
+                packet.set(this.CTRL_MAGIC, 0);
+
+                const cmdBytes = new TextEncoder().encode(command);
+                for (let i = 0; i < Math.min(cmdBytes.length, 16); i++) {
+                    packet[this.CTRL_MAGIC.length + i] = cmdBytes[i];
+                }
+
+                for (let i = 0; i < this.CTRL_MAGIC.length; i++) {
+                    packet[this.CTRL_INV_OFFSET + i] = this.CTRL_MAGIC[i] ^ 0xFF;
+                }
+
+                return this.padTo64Bytes(packet);
+            }
+
+            processEspPackets(data) {
+                this.rxBuffer = this.appendBuffer(this.rxBuffer, data);
+
+                const emitData = (chunk) => {
+                    if (!chunk || chunk.length === 0) return;
+                    if (this.data_cbr) {
+                        this.data_cbr(chunk);
+                    }
+                };
+
+                const emitLog = (msgBytes) => {
+                    const text = new TextDecoder().decode(msgBytes);
+                    if (this.log_cbr) {
+                        this.log_cbr({
+                            type: 'log_packet',
+                            data: msgBytes,
+                            text
+                        });
+                    }
+                };
+
+                const indexOfMagic = (buf, magic) => {
+                    if (!buf || buf.length < magic.length) return -1;
+                    for (let i = 0; i <= buf.length - magic.length; i++) {
+                        let match = true;
+                        for (let j = 0; j < magic.length; j++) {
+                            if (buf[i + j] !== magic[j]) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match) return i;
+                    }
+                    return -1;
+                };
+
+                const magicTailMatchLen = (buf, magic) => {
+                    const maxLen = Math.min(buf.length, magic.length - 1);
+                    for (let len = maxLen; len > 0; len--) {
+                        let match = true;
+                        for (let i = 0; i < len; i++) {
+                            if (buf[buf.length - len + i] !== magic[i]) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match) return len;
+                    }
+                    return 0;
+                };
+
+                /* UART-like stream: peel off ESP LOG packets, forward remaining bytes */
+                while (this.rxBuffer.length > 0) {
+                    const magicIdx = indexOfMagic(this.rxBuffer, this.LOG_MAGIC);
+
+                    if (magicIdx === -1) {
+                        const keepLen = magicTailMatchLen(this.rxBuffer, this.LOG_MAGIC);
+                        const emitLen = this.rxBuffer.length - keepLen;
+                        if (emitLen > 0) {
+                            emitData(this.rxBuffer.slice(0, emitLen));
+                            this.rxBuffer = this.rxBuffer.slice(emitLen);
+                        }
+
+                        /* If we keep a partial LOG_MAGIC prefix, flush it after a short idle timeout */
+                        if (this.rxBuffer.length > 0) {
+                            this._armRxFlushTimer();
+                        } else {
+                            this._clearRxFlushTimer();
+                        }
+                        return;
+                    }
+
+                    if (magicIdx > 0) {
+                        emitData(this.rxBuffer.slice(0, magicIdx));
+                        this.rxBuffer = this.rxBuffer.slice(magicIdx);
+                        continue;
+                    }
+
+                    /* magicIdx === 0: attempt to parse a full LOG packet */
+                    if (this.rxBuffer.length < this.LOG_HEADER_SIZE) {
+                        this._armRxFlushTimer();
+                        return;
+                    }
+
+                    if (!this.checkMagic(this.rxBuffer, this.LOG_INV_OFFSET, this.LOG_MAGIC, true)) {
+                        /* Not actually a LOG packet; forward one byte and resync */
+                        emitData(this.rxBuffer.slice(0, 1));
+                        this.rxBuffer = this.rxBuffer.slice(1);
+                        continue;
+                    }
+
+                    const length = (this.rxBuffer[this.LOG_MAGIC.length]) |
+                        (this.rxBuffer[this.LOG_MAGIC.length + 1] << 8) |
+                        (this.rxBuffer[this.LOG_MAGIC.length + 2] << 16) |
+                        (this.rxBuffer[this.LOG_MAGIC.length + 3] << 24);
+
+                    if (length < 0 || length > this.LOGMSG_MAX_LEN) {
+                        logToConsole(`Invalid LOGMSG length: ${length}`, 'info');
+                        emitData(this.rxBuffer.slice(0, 1));
+                        this.rxBuffer = this.rxBuffer.slice(1);
+                        continue;
+                    }
+
+                    if (this.rxBuffer.length < this.LOG_HEADER_SIZE + length) {
+                        this._armRxFlushTimer();
+                        return;
+                    }
+
+                    const msgBytes = this.rxBuffer.slice(this.LOG_HEADER_SIZE, this.LOG_HEADER_SIZE + length);
+                    emitLog(msgBytes);
+                    this.rxBuffer = this.rxBuffer.slice(this.LOG_HEADER_SIZE + length);
+                }
+
+                /* Nothing buffered, cancel idle flush */
+                this._clearRxFlushTimer();
+            }
+
+            async readFromPort() {
+                if (!this.port) return;
+
+                try {
+                    this.reader = this.port.readable.getReader();
+                    this.inputDone = false;
+
+                    while (!this.inputDone && this.port) {
+                        try {
+                            const { value, done } = await this.reader.read();
+                            if (done) break;
+
+                            if (value) {
+                                /* Always log raw RX bytes and feed ESP packet splitter */
+                                // consoleLogHex('RX:', value);
+                                this.processEspPackets(value);
+                            }
+                        } catch (err) {
+                            if (err.name !== 'AbortError') {
+                                logToConsole(`Read error: ${err.message}`, 'info');
+                            }
+                            break;
+                        }
+                    }
+                } catch (err) {
+                    logToConsole(`ReadFromPort error: ${err.message}`, 'info');
+                } finally {
+                    if (this.reader) {
+                        this.reader.releaseLock();
+                        this.reader = null;
+                    }
+                }
+            }
+
+            async sendBreak() {
+                if (!this.port) return;
+                try {
+                    let breakLen = parseInt(document.getElementById('breakLenInput').value) || 200;
+                    if (breakLen > 200) breakLen = 200;
+                    if (breakLen < 0) breakLen = 0;
+                    const commandStr = 'B:' + breakLen;
+
+                    const packet = this.buildControlPacket(commandStr);
+                    const writer = this.port.writable.getWriter();
+                    await writer.write(packet);
+                    writer.releaseLock();
+                    consoleLogHex('TX Break:', packet);
+
+                    //logToConsole(`Break condition sent (${breakLen} bits)`, 'info');
+                } catch (err) {
+                    logToConsole(`Break send error: ${err.message}`, 'info');
+                }
+            }
+
+            async setResetGpio(value) {
+                if (!this.port) return;
+                try {
+                    const command = value ? 'R:1' : 'R:0';
+                    const packet = this.buildControlPacket(command);
+                    const writer = this.port.writable.getWriter();
+                    await writer.write(packet);
+                    writer.releaseLock();
+                    consoleLogHex('TX Reset:', packet);
+                    // logToConsole(`Reset GPIO: ${value ? 'HIGH' : 'LOW'}`, 'tx');
+                } catch (err) {
+                    logToConsole(`GPIO write error: ${err.message}`, 'info');
+                }
+            }
+
+            async setControlGpio(value) {
+                if (!this.port) return;
+                try {
+                    const command = value ? 'C:1' : 'C:0';
+                    const packet = this.buildControlPacket(command);
+                    const writer = this.port.writable.getWriter();
+                    await writer.write(packet);
+                    writer.releaseLock();
+                    consoleLogHex('TX Control:', packet);
+                    // logToConsole(`Control GPIO: ${value ? 'HIGH' : 'LOW'}`, 'tx');
+                } catch (err) {
+                    logToConsole(`GPIO write error: ${err.message}`, 'info');
+                }
+            }
+        }
+
+        /* ============= CC3200Serial Class ============= */
+        class CC3200PacketAssembler {
+            constructor(expectedLen = null) {
+                this.expectedLen = expectedLen;
+                this.buffer = new Uint8Array(0);
+
+                this.debug = false;
+
+                this._dbg(`ctor(expectedLen=${this.expectedLen})`);
+            }
+
+            _dbg(msg) {
+                if (!this.debug) return;
+                try {
+                    logToConsole(`CC3200PacketAssembler: ${msg}`, 'info');
+                } catch (e) {
+                    /* ignore */
+                }
+            }
+
+            appendBuffer(a, b) {
+                if (!a || a.length === 0) return new Uint8Array(b);
+                const out = new Uint8Array(a.length + b.length);
+                out.set(a, 0);
+                out.set(b, a.length);
+                return out;
+            }
+
+            push(data) {
+                this._dbg(`push(data_len=${data ? data.length : 0}) buffer_len=${this.buffer.length}`);
+                if (!data || data.length === 0) {
+                    this._dbg('no data, return null');
+                    return null;
+                }
+                this.buffer = this.appendBuffer(this.buffer, data);
+
+                if (this.debug) {
+                    const peekLen = Math.min(16, this.buffer.length);
+                    const peek = Array.from(this.buffer.slice(0, peekLen)).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                    this._dbg(`buffer_append -> buffer_len=${this.buffer.length} peek[0..${peekLen - 1}]=${peek}${this.buffer.length > peekLen ? ' ...' : ''}`);
+                }
+
+                if (this.buffer.length < 3) {
+                    this._dbg('need header(3), return null');
+                    return null;
+                }
+
+                const len = (this.buffer[0] << 8) | this.buffer[1];
+                const csum = this.buffer[2];
+                const dataLen = len - 2;
+                this._dbg(`hdr: len=0x${len.toString(16).padStart(4, '0')} (${len}) csum=0x${csum.toString(16).padStart(2, '0')} dataLen=${dataLen}`);
+                if (dataLen < 0) {
+                    this._dbg('dataLen < 0, drop 1 byte and resync');
+                    this.buffer = this.buffer.slice(1);
+                    return null;
+                }
+
+                const totalLen = 3 + dataLen;
+                if (this.buffer.length < totalLen) {
+                    this._dbg(`need totalLen=${totalLen}, have=${this.buffer.length}, return null`);
+                    return null;
+                }
+
+                const payload = this.buffer.slice(3, 3 + dataLen);
+                let sum = 0;
+                for (let i = 0; i < payload.length; i++) {
+                    sum = (sum + payload[i]) & 0xFF;
+                }
+                this._dbg(`checksum calc=0x${sum.toString(16).padStart(2, '0')} payload_len=${payload.length}`);
+                if (sum !== csum) {
+                    this._dbg(`checksum mismatch got=0x${csum.toString(16).padStart(2, '0')} calc=0x${sum.toString(16).padStart(2, '0')}`);
+                    throw new Error(`CC3200 RX csum failed (got 0x${csum.toString(16).padStart(2, '0')}, calc 0x${sum.toString(16).padStart(2, '0')})`);
+                }
+
+                const remainder = this.buffer.slice(totalLen);
+                this.buffer = remainder;
+                this._dbg(`packet ok, consumed=${totalLen}, remainder_len=${this.buffer.length}`);
+
+                if (this.expectedLen !== null && payload.length !== this.expectedLen) {
+                    this._dbg(`expectedLen mismatch expected=${this.expectedLen} got=${payload.length}`);
+                    logToConsole(`CC3200 RX packet length mismatch (expected ${this.expectedLen}, got ${payload.length})`, 'info');
+                }
+
+                return payload;
+            }
+        }
+
+        class CC3200Serial {
+            constructor(espSerial) {
+                this.espSerial = espSerial;
+                this.waitingForResponse = false;
+                this.cc3200State = 'idle'; /* idle, waitingForAck, waitingForData, delayingBeforeAck */
+                this.rxBuffer = new Uint8Array(0);
+                this.cc3200AckTimer = null;
+                this.receive_cbr = null;
+
+                this.pendingResponse = null;
+                this.responseTimer = null;
+                this.byteResponseBuffer = new Uint8Array(0);
+                this.packetAssembler = null;
+                this.ackDelayMs = 0;
+                this.autoFinishAfterAck = false;
+
+                this.pendingResolve = null;
+                this.pendingReject = null;
+
+                this.pendingAckPromise = null;
+            }
+
+            setReceiveCallback(callback) {
+                this.receive_cbr = callback;
+            }
+
+            appendBuffer(a, b) {
+                if (!a || a.length === 0) return new Uint8Array(b);
+                const out = new Uint8Array(a.length + b.length);
+                out.set(a, 0);
+                out.set(b, a.length);
+                return out;
+            }
+
+            _clearResponseTimer() {
+                if (this.responseTimer) {
+                    clearTimeout(this.responseTimer);
+                    this.responseTimer = null;
+                }
+            }
+
+            _finishResponse() {
+                this._clearResponseTimer();
+                this.waitingForResponse = false;
+                this.cc3200State = 'idle';
+                this.pendingResponse = null;
+                this.byteResponseBuffer = new Uint8Array(0);
+                this.packetAssembler = null;
+                this.rxBuffer = new Uint8Array(0);
+                this.autoFinishAfterAck = false;
+            }
+
+            _resolvePending(result) {
+                if (this.pendingResolve) {
+                    const r = this.pendingResolve;
+                    this.pendingResolve = null;
+                    this.pendingReject = null;
+                    r(result);
+                }
+            }
+
+            _rejectPending(err) {
+                if (this.pendingReject) {
+                    const rj = this.pendingReject;
+                    this.pendingResolve = null;
+                    this.pendingReject = null;
+                    rj(err);
+                }
+            }
+
+            _armResponseTimeout(timeoutMs) {
+                this._clearResponseTimer();
+                this.responseTimer = setTimeout(() => {
+                    logToConsole('CC3200 response timeout', 'info');
+                    this._rejectPending(new Error('CC3200 response timeout'));
+                    this._finishResponse();
+                }, timeoutMs);
+            }
+
+            async _sendAckNow() {
+                if (!this.espSerial.port) return;
+                const ack = new Uint8Array([0x00, 0xCC]);
+                const writer = this.espSerial.port.writable.getWriter();
+                await writer.write(ack);
+                writer.releaseLock();
+                consoleLogHex('TX CC3200Ack:', ack);
+            }
+
+            _scheduleAck() {
+                if (this.ackDelayMs <= 0) {
+                    this.pendingAckPromise = this._sendAckNow();
+                    return this.pendingAckPromise;
+                }
+
+                this.pendingAckPromise = new Promise((resolve, reject) => {
+                    setTimeout(() => {
+                        this._sendAckNow().then(resolve).catch((err) => {
+                            logToConsole(`CC3200 ACK send error: ${err.message}`, 'info');
+                            reject(err);
+                        });
+                    }, this.ackDelayMs);
+                });
+                return this.pendingAckPromise;
+            }
+
+            processCC3200Response(data) {
+                if (!data) return;
+
+                if (data.length > 0) {
+                    this.rxBuffer = this.appendBuffer(this.rxBuffer, data);
+                    consoleLogHex(`RX CC3200(${this.cc3200State}, ${this.rxBuffer.length} buffered, ${this.pendingResponse ? this.pendingResponse.kind : 'none'}):`, data);
+                }
+
+                if (this.cc3200State === 'idle') {
+                    /* Not expecting anything - just ignore */
+                    this.rxBuffer = new Uint8Array(0);
+                    return;
+                }
+
+                /* During sync, check last two bytes for 00 CC */
+                if (this.cc3200State === 'syncing') {
+                    if (this.rxBuffer.length >= 2) {
+                        const lastIdx = this.rxBuffer.length - 1;
+                        if (this.rxBuffer[lastIdx - 1] === 0x00 && this.rxBuffer[lastIdx] === 0xCC) {
+                            logToConsole('Sync complete - received 00 CC', 'info');
+                            this.cc3200State = 'idle';
+                            this.rxBuffer = new Uint8Array(0);
+                            return;
+                        }
+                        /* Keep only last byte to avoid buffer growth */
+                        this.rxBuffer = this.rxBuffer.slice(lastIdx);
+                    }
+                    return;
+                }
+
+                if (this.cc3200State === 'waitingForAck') {
+                    let ackFound = false;
+                    for (let i = 0; i < this.rxBuffer.length - 1; i++) {
+                        if (this.rxBuffer[i] === 0x00 && this.rxBuffer[i + 1] === 0xCC) {
+                            //logToConsole('Device ACK received (00 CC)', 'info');
+                            this.receive_cbr && this.receive_cbr({
+                                type: 'cc3200_ack',
+                                data: null
+                            });
+
+                            this.rxBuffer = this.rxBuffer.slice(i + 2);
+                            if (this.autoFinishAfterAck && !this.pendingResponse) {
+                                this._resolvePending({ kind: 'ack' });
+                                this._finishResponse();
+                                return;
+                            }
+
+                            this.cc3200State = 'waitingForData';
+                            ackFound = true;
+                            break;
+                        }
+                    }
+
+                    if (ackFound) {
+                        this.processCC3200Response(new Uint8Array(0));
+                        return;
+                    } else {
+                        if (this.rxBuffer.length > 0 && this.rxBuffer[this.rxBuffer.length - 1] === 0x00) {
+                            this.rxBuffer = this.rxBuffer.slice(this.rxBuffer.length - 1);
+                        } else {
+                            this.rxBuffer = new Uint8Array(0);
+                        }
+                        return;
+                    }
+                }
+
+                if (this.cc3200State === 'waitingForData') {
+                    if (!this.pendingResponse) {
+                        this.rxBuffer = new Uint8Array(0);
+                        return;
+                    }
+
+                    if (this.pendingResponse.kind === 'bytes') {
+                        this.byteResponseBuffer = this.appendBuffer(this.byteResponseBuffer, this.rxBuffer);
+                        this.rxBuffer = new Uint8Array(0);
+
+                        if (this.byteResponseBuffer.length < this.pendingResponse.expectedBytes) {
+                            return;
+                        }
+
+                        const out = this.byteResponseBuffer.slice(0, this.pendingResponse.expectedBytes);
+                        this.byteResponseBuffer = this.byteResponseBuffer.slice(this.pendingResponse.expectedBytes);
+                        if (this.pendingResponse.callback) {
+                            try {
+                                this.pendingResponse.callback(this.pendingResponse.ctx, out);
+                            } catch (err) {
+                                logToConsole(`CC3200 response callback error: ${err.message}`, 'info');
+                            }
+                        }
+                        this._resolvePending({ kind: 'bytes', data: out });
+                        this._finishResponse();
+                        return;
+                    }
+
+                    if (this.pendingResponse.kind === 'packet') {
+                        if (!this.packetAssembler) {
+                            this.packetAssembler = new CC3200PacketAssembler(this.pendingResponse.expectedLen ?? null);
+                        }
+
+                        try {
+                            const payload = this.packetAssembler.push(this.rxBuffer);
+                            this.rxBuffer = new Uint8Array(0);
+                            if (!payload) {
+                                return;
+                            }
+
+                            if (this.pendingResponse.callback) {
+                                try {
+                                    this.pendingResponse.callback(this.pendingResponse.ctx, payload);
+                                } catch (err) {
+                                    logToConsole(`CC3200 response callback error: ${err.message}`, 'info');
+                                }
+                            }
+                            const ackPromise = this._scheduleAck();
+                            this._resolvePending({ kind: 'packet', data: payload, ackPromise });
+                            this._finishResponse();
+                            return;
+                        } catch (err) {
+                            logToConsole(`CC3200 packet error: ${err.message}`, 'info');
+                            this._rejectPending(err);
+                            this._finishResponse();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            async sendCommand(data, expectResponse = false) {
+                if (!this.espSerial.port) return;
+                try {
+                    const len = data.length + 2;
+                    const checksum = (data.reduce((sum, byte) => sum + byte, 0)) & 0xFF;
+                    const packet = new Uint8Array(3 + data.length);
+                    packet[0] = (len >> 8) & 0xFF;
+                    packet[1] = len & 0xFF;
+                    packet[2] = checksum;
+                    packet.set(data, 3);
+
+                    this.waitingForResponse = true;
+                    this.cc3200State = 'waitingForAck';
+                    this.autoFinishAfterAck = !expectResponse;
+                    const writer = this.espSerial.port.writable.getWriter();
+                    await writer.write(packet);
+                    writer.releaseLock();
+                    consoleLogHex('TX CC3200Cmd:', packet);
+
+                    //logToConsole(`CC3200 command sent: ${hexdump(packet)}`, 'tx');
+
+                } catch (err) {
+                    logToConsole(`CC3200 send error: ${err.message}`, 'info');
+                }
+            }
+
+            async sendCommandWaitAck(data, timeoutMs = 1000) {
+                if (this.pendingReject) {
+                    this._rejectPending(new Error('CC3200 previous command cancelled'));
+                }
+
+                const res = await new Promise(async (resolve, reject) => {
+                    this.pendingResolve = resolve;
+                    this.pendingReject = reject;
+                    this.pendingResponse = null;
+                    try {
+                        await this.sendCommand(data, false);
+                    } catch (err) {
+                        this._rejectPending(err);
+                        this._finishResponse();
+                        return;
+                    }
+                    this._armResponseTimeout(timeoutMs);
+                });
+                return res;
+            }
+
+            async sendCommandWithResponse(data, responseSpec) {
+                if (this.pendingReject) {
+                    this._rejectPending(new Error('CC3200 previous command cancelled'));
+                }
+
+                const res = await new Promise(async (resolve, reject) => {
+                    this.pendingResolve = resolve;
+                    this.pendingReject = reject;
+                    this.pendingResponse = responseSpec;
+                    const timeout = responseSpec?.timeoutMs ?? 1000;
+                    try {
+                        await this.sendCommand(data, true);
+                    } catch (err) {
+                        this._rejectPending(err);
+                        this._finishResponse();
+                        return;
+                    }
+                    this._armResponseTimeout(timeout);
+                });
+
+                if (res && res.ackPromise) {
+                    await res.ackPromise;
+                }
+                return res;
+            }
+
+            async performSync() {
+                if (!this.espSerial.port) return;
+
+                logToConsole('Starting CC3200 sync sequence...', 'info');
+                this.cc3200State = 'syncing';
+
+                try {
+                    /* Outer retry loop - 5 times */
+                    for (let outerRetry = 0; outerRetry < 5; outerRetry++) {
+                        if (this.cc3200State !== 'syncing') break;
+
+                        logToConsole(`Sync attempt ${outerRetry + 1}/5`, 'info');
+
+                        await this.espSerial.setControlGpio(true);
+                        await this.espSerial.setResetGpio(false);
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        await this.espSerial.setResetGpio(true);
+                        await new Promise(resolve => setTimeout(resolve, 250));
+
+                        /* Inner retry loop - 5 breaks */
+                        for (let breakRetry = 0; breakRetry < 3; breakRetry++) {
+                            //logToConsole(`Break ${breakRetry + 1}/5`, 'info');
+                            await this.espSerial.sendBreak();
+
+                            /* Wait 500ms for 00 CC response */
+                            const synced = await this.waitForSyncResponse();
+                            if (synced) {
+                                logToConsole('Sync successful!', 'info');
+                                return;
+                            }
+                        }
+                    }
+                    logToConsole('Sync failed after all retries', 'info');
+                    this.cc3200State = 'idle';
+                } catch (err) {
+                    logToConsole(`Sync error: ${err.message}`, 'info');
+                    this.cc3200State = 'idle';
+                }
+            }
+
+            async waitForSyncResponse() {
+                return new Promise((resolve) => {
+                    const startTime = Date.now();
+                    const checkInterval = setInterval(() => {
+                        if (this.cc3200State === 'idle') {
+                            clearInterval(checkInterval);
+                            resolve(true);
+                            return;
+                        }
+
+                        if (Date.now() - startTime >= 500) {
+                            clearInterval(checkInterval);
+                            resolve(false);
+                        }
+                    }, 10);
+                });
+            }
+
+            async disconnect() {
+                if (this.cc3200AckTimer) {
+                    clearTimeout(this.cc3200AckTimer);
+                    this.cc3200AckTimer = null;
+                }
+                this._rejectPending(new Error('CC3200 disconnected'));
+                this._clearResponseTimer();
+                this.waitingForResponse = false;
+                this.cc3200State = 'idle';
+                this.pendingResponse = null;
+                this.byteResponseBuffer = new Uint8Array(0);
+                this.packetAssembler = null;
+                this.rxBuffer = new Uint8Array(0);
+
+                this.pendingAckPromise = null;
+            }
+        }
+
+        /* ============= Global State and UI Functions ============= */
+        let espSerial = null;
+        let cc3200Serial = null;
+        let displayBuffer = new Uint8Array(0);
+        let displayTimer = null;
+        let hexDumpOffset = 0;
+        let sendMode = 'hex';
+
+        const CC3200_OPCODES = {
+            GetVersion: 0x2F,
+            GetStorageList: 0x27,
+            GetStorageInfo: 0x31,
+            RawRead: 0x2C,
+
+            StartUpload: 0x21,
+            FinishUpload: 0x22,
+            GetLastStatus: 0x23,
+            FileChunk: 0x24,
+            GetFileInfo: 0x2A,
+            ReadFileChunk: 0x2B,
+            EraseFile: 0x2E,
+            SwitchToApps: 0x33
+        };
+
+        const CC3200_STORAGE = {
+            SRAM: 0,
+            FLASH: 1,
+            SFLASH: 2
+        };
+
+        /* Global SparseImage for flash access */
+        let cc3200FlashImage = null;
+        const FLASH_SIZE = 16 * 1024 * 1024; // 16MB default flash size
+
+        async function initializeFlashImage(sizeBytes = FLASH_SIZE) {
+            /* Create SparseImage with RawRead callback */
+            cc3200FlashImage = new SparseImage(sizeBytes, async (address, size) => {
+                /* Read data from CC3200 via RawRead */
+                const client = ensureSffsClient();
+                const cmd = u8Concat([
+                    new Uint8Array([CC3200_OPCODES.RawRead]),
+                    be32(CC3200_STORAGE.SFLASH >>> 0),
+                    be32(address >>> 0),
+                    be32(size >>> 0)
+                ]);
+                const timeoutMs = Math.max(2000, 1500 + Math.ceil(size / 50));
+                const res = await client.cc.sendCommandWithResponse(cmd, {
+                    kind: 'packet',
+                    expectedLen: size,
+                    timeoutMs,
+                    callback: null,
+                    ctx: { cmdId: 'SparseImageRead' }
+                });
+                if (!res?.data || res.data.length !== size) {
+                    throw new Error(`SparseImage: RawRead failed (address=0x${address.toString(16)} size=${size} got=${res?.data?.length ?? 0})`);
+                }
+                logToConsole(`SparseImage: read 0x${address.toString(16)} size=${size}`, 'debug');
+                return { address, data: res.data };
+            });
+            logToConsole('SparseImage initialized for CC3200 flash access', 'info');
+        }
+
+        const CC3200_STORAGE_BITS = [
+            { bit: 0x02, storageId: CC3200_STORAGE.FLASH, name: 'FLASH' },
+            { bit: 0x04, storageId: CC3200_STORAGE.SFLASH, name: 'SFLASH' },
+            { bit: 0x80, storageId: CC3200_STORAGE.SRAM, name: 'SRAM' }
+        ];
+
+        const CC_COMMANDS = [
+            {
+                id: 'Storage',
+                title: 'Storage',
+                description: 'Reads storage list + per-storage info, then allows full dumps to .bin',
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div style="font-weight:600;">Storage</div>
+                            <button id="btnStorageReadInfo" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Read Info</button>
+                            <div id="storageStatus" style="color:#9ca3af; font-size:12px;">${this.description || ''}</div>
+                        </div>
+                        <div id="storagePanes" style="margin-top:10px; display:flex; flex-direction:column; gap:10px;"></div>
+                    `;
+                }
+            },
+            {
+                id: 'SFFS',
+                title: 'SFFS',
+                description: 'List / read / write files in CC3200 SFFS (FAT in serial flash)',
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:12px;">
+                            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                <div style="font-weight:600;">SFFS</div>
+                                <button id="btnSffsRefresh" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Refresh list</button>
+                                <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-size:12px;">
+                                    <input id="sffsInactive" type="checkbox" style="cursor:pointer;">
+                                    Use inactive FAT
+                                </label>
+                                <div id="sffsStatus" style="color:#9ca3af; font-size:12px;">${this.description || ''}</div>
+                            </div>
+
+                            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                                <input id="sffsFilename" type="text" value="/sys/mcuimg.bin" placeholder="/path/file.bin" style="width: 260px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+                                <button id="btnSffsRead" style="padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Read / download</button>
+                                <input id="sffsUpload" type="file" style="color:#9ca3af; font-size:12px;">
+                                <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-size:12px;">
+                                    <input id="sffsCommit" type="checkbox" style="cursor:pointer;">
+                                    Commit (mirror)
+                                </label>
+                                <button id="btnSffsWrite" style="padding: 10px 20px; background: #f59e0b; color: #111827; border: none; border-radius: 6px; cursor: pointer; font-weight: 800;">Write / upload</button>
+                                <button id="btnSffsErase" style="padding: 10px 20px; background: #ef4444; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 800;">Erase</button>
+                            </div>
+
+                            <div id="sffsList" style="padding:10px; border:1px solid #374151; border-radius:6px; background: rgba(15, 23, 42, 0.6); overflow:auto; max-height: 280px;"></div>
+                        </div>
+                    `;
+                }
+            },
+            {
+                id: 'GetVersion',
+                title: 'GetVersion',
+                description: 'Opcode 0x2F, response: packet(28)',
+                build: () => new Uint8Array([CC3200_OPCODES.GetVersion]),
+                response: { kind: 'packet', expectedLen: 28, timeoutMs: 1500 },
+                parse: onGetVersion,
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div style="font-weight:600;">GetVersion</div>
+                            <button id="btnRun_GetVersion" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Run</button>
+                            <div style="color:#9ca3af; font-size:12px;">${this.description || ''}</div>
+                        </div>
+                    `;
+                }
+            },
+            {
+                id: 'GetStorageList',
+                title: 'GetStorageList',
+                description: 'Opcode 0x27, response: 1 byte',
+                build: () => new Uint8Array([CC3200_OPCODES.GetStorageList]),
+                response: { kind: 'bytes', expectedBytes: 1, timeoutMs: 700 },
+                parse: onGetStorageList,
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div style="font-weight:600;">GetStorageList</div>
+                            <button id="btnRun_GetStorageList" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Run</button>
+                            <div style="color:#9ca3af; font-size:12px;">${this.description || ''}</div>
+                        </div>
+                    `;
+                }
+            },
+            {
+                id: 'GetStorageInfo',
+                title: 'GetStorageInfo',
+                description: 'Opcode 0x31 + be32(storage_id), response: packet',
+                build: (ctx) => {
+                    const storageId = ctx?.storageId ?? 0;
+                    return new Uint8Array([
+                        CC3200_OPCODES.GetStorageInfo,
+                        (storageId >>> 24) & 0xFF,
+                        (storageId >>> 16) & 0xFF,
+                        (storageId >>> 8) & 0xFF,
+                        storageId & 0xFF
+                    ]);
+                },
+                response: { kind: 'packet', expectedLen: null, timeoutMs: 1500 },
+                parse: onGetStorageInfo,
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div style="font-weight:600;">GetStorageInfo</div>
+                            <select id="ccTabStorageSelect" style="width: 180px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+                                <option value="0">SRAM (0)</option>
+                                <option value="2">SFLASH (2)</option>
+                            </select>
+                            <button id="btnRun_GetStorageInfo" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Run</button>
+                            <div style="color:#9ca3af; font-size:12px;">${this.description || ''}</div>
+                        </div>
+                    `;
+                }
+            }
+            ,
+            {
+                id: 'RawRead',
+                title: 'RawRead',
+                description: 'Opcode 0x2C + be32(storage_id, offset, size), reads in 4096-byte blocks (downloads file)',
+                build: (ctx) => {
+                    const storageId = ctx?.storageId ?? CC3200_STORAGE.SRAM;
+                    const offset = ctx?.offset ?? 0;
+                    const size = ctx?.size ?? 0;
+                    return u8Concat([
+                        new Uint8Array([CC3200_OPCODES.RawRead]),
+                        be32(storageId >>> 0),
+                        be32(offset >>> 0),
+                        be32(size >>> 0)
+                    ]);
+                },
+                response: { kind: 'packet', expectedLen: null, timeoutMs: 4000 },
+                parse: onRawRead,
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div style="font-weight:600;">RawRead</div>
+
+                            <select id="ccRawReadStorageSelect" style="width: 180px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+                                <option value="0">SRAM (0)</option>
+                                <option value="2">SFLASH (2)</option>
+                            </select>
+
+                            <input id="ccRawReadOffset" type="text" value="0" placeholder="offset (dec or 0x..)" style="width: 180px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+                            <input id="ccRawReadSize" type="text" value="4096" placeholder="size (dec or 0x..)" style="width: 180px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+                            <input id="ccRawReadFilename" type="text" value="raw_read.bin" placeholder="download filename" style="width: 200px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+
+                            <button id="btnRun_RawRead" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Run</button>
+                            <div style="color:#9ca3af; font-size:12px;">${this.description || ''}</div>
+                        </div>
+                    `;
+                }
+            }
+            ,
+            {
+                id: 'SwitchToApps',
+                title: 'Switch to APPS',
+                description: 'Opcode 0x33 + be32(delay_ticks) - Switches UART from bootloader to CC3100 NWP (CC3200 only, requires ~1 sec delay = 26666667 ticks)',
+                build: (ctx) => {
+                    const delayTicks = ctx?.delayTicks ?? 26666667;
+                    return u8Concat([
+                        new Uint8Array([CC3200_OPCODES.SwitchToApps]),
+                        be32(delayTicks >>> 0)
+                    ]);
+                },
+                response: { kind: 'bytes', expectedBytes: 0, timeoutMs: 2000 },
+                parse: function(data) {
+                    logToConsole('Switch to APPS: command accepted, NWP should be initializing...', 'info');
+                    return data;
+                },
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div style="font-weight:600;">Switch to APPS MCU</div>
+                            <input id="ccSwitchToAppsDelay" type="text" value="26666667" placeholder="delay in ticks" style="width: 200px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;" title="One second = 26666667 ticks">
+                            <button id="btnRun_SwitchToApps" style="padding: 10px 20px; background: #f59e0b; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;\">Run</button>
+                            <div style="color:#9ca3af; font-size:12px;\">${this.description || ''}</div>
+                        </div>
+                    `;
+                }
+            }
+            ,
+            {
+                id: 'Raw',
+                title: 'Raw',
+                description: 'Send raw bytes/text (Hex or CC3200 framed)',
+                render: function (panelEl) {
+                    panelEl.innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:12px;">
+                            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                <div style="font-weight:600;">Raw</div>
+                                <div style="color:#9ca3af; font-size:12px;">${this.description || ''}</div>
+                            </div>
+
+                            <div class="controls-section" style="padding: 12px; margin:0;">
+                                <div class="gpio-controls">
+                                    <div class="gpio-control">
+                                        <input type="checkbox" id="resetCheckbox" onchange="setResetGpio(!this.checked)">
+                                        <label for="resetCheckbox">Reset</label>
+                                    </div>
+                                    <div class="gpio-control">
+                                        <input type="checkbox" id="controlCheckbox" onchange="setControlGpio(this.checked)">
+                                        <label for="controlCheckbox">SOP2</label>
+                                    </div>
+                                    <button class="btn-primary" onclick="sendBreak()" style="padding: 8px 16px; font-size: 13px;">Break</button>
+                                    <input type="number" id="breakLenInput" value="255" min="0" max="255" placeholder="Bit count" style="width: 120px; padding: 8px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-size: 12px;">
+                                </div>
+                            </div>
+
+                            <div class="input-section" style="margin:0;">
+                                <div style="display: flex; gap: 15px; align-items: center;">
+                                    <label style="display: flex; align-items: center; gap: 6px;">
+                                        <input type="radio" name="sendMode" value="hex" checked onchange="updateSendMode()" style="cursor: pointer;">
+                                        Hex
+                                    </label>
+                                    <label style="display: flex; align-items: center; gap: 6px;">
+                                        <input type="radio" name="sendMode" value="cc3200" onchange="updateSendMode()" style="cursor: pointer;">
+                                        CC3200
+                                    </label>
+                                </div>
+                                <input type="text" id="hexInput" placeholder="Hex bytes: DD EE AA DD BE EF" onkeypress="handleHexKeyPress(event)" style="font-size: 12px; flex: 1;">
+                                <button onclick="sendData()" style="font-size: 13px;">Send</button>
+                            </div>
+
+                            <div class="input-section" style="margin:0;">
+                                <input type="text" id="commandInput" placeholder="Enter command or text..." onkeypress="handleKeyPress(event)">
+                                <button onclick="sendCommand()">Send</button>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        ];
+
+        function be32(v) {
+            return new Uint8Array([
+                (v >>> 24) & 0xFF,
+                (v >>> 16) & 0xFF,
+                (v >>> 8) & 0xFF,
+                v & 0xFF
+            ]);
+        }
+
+        function le16From(u8, off) {
+            return (u8[off] | (u8[off + 1] << 8)) >>> 0;
+        }
+
+        function le32From(u8, off) {
+            return (u8[off] | (u8[off + 1] << 8) | (u8[off + 2] << 16) | (u8[off + 3] << 24)) >>> 0;
+        }
+
+        function be32From(u8, off) {
+            return (((u8[off] << 24) >>> 0) | (u8[off + 1] << 16) | (u8[off + 2] << 8) | u8[off + 3]) >>> 0;
+        }
+
+        function u8Concat(parts) {
+            let total = 0;
+            for (const p of parts) total += p.length;
+            const out = new Uint8Array(total);
+            let off = 0;
+            for (const p of parts) {
+                out.set(p, off);
+                off += p.length;
+            }
+            return out;
+        }
+
+        function parseIntAuto(s) {
+            if (typeof s !== 'string') return NaN;
+            const t = s.trim();
+            if (!t) return NaN;
+            return parseInt(t, t.startsWith('0x') || t.startsWith('0X') ? 16 : 10);
+        }
+
+        async function rawReadRangeToU8(ctx) {
+            const storageId = (ctx.storageId ?? CC3200_STORAGE.SFLASH) >>> 0;
+            const offset = (ctx.offset ?? 0) >>> 0;
+            const size = (ctx.size ?? 0) >>> 0;
+            const onChunk = (typeof ctx?.onChunk === 'function') ? ctx.onChunk : null;
+
+            /* If SparseImage is available and reading from SFLASH, use it */
+            if (cc3200FlashImage && storageId === CC3200_STORAGE.SFLASH) {
+                /* Prefetch data with progress reporting */
+                if (onChunk) {
+                    const blockSize = 4096;
+                    let done = 0;
+                    while (done < size) {
+                        const chunkSize = Math.min(blockSize, size - done);
+                        await cc3200FlashImage.prefetch(offset + done, chunkSize);
+                        done += chunkSize;
+                        onChunk({ storageId, offset: offset + done - chunkSize, chunkSize, done, total: size, data: null });
+                    }
+                }
+                /* Get the complete data */
+                return await cc3200FlashImage.subarray_async(offset, offset + size);
+            }
+
+            /* Fall back to direct RawRead commands */
+            const blockSize = 4096;
+            let remaining = size;
+            let currentOffset = offset;
+            const onChunkInternal = (typeof ctx?.onChunk === 'function') ? ctx.onChunk : null;
+
+            const chunks = [];
+            const total = remaining;
+            let done = 0;
+
+            while (remaining > 0) {
+                const chunkSize = Math.min(blockSize, remaining);
+                const cmdPayload = u8Concat([
+                    new Uint8Array([CC3200_OPCODES.RawRead]),
+                    be32(storageId >>> 0),
+                    be32(currentOffset >>> 0),
+                    be32(chunkSize >>> 0)
+                ]);
+
+                const timeoutMs = Math.max(2000, 1500 + Math.ceil(chunkSize / 50));
+                const res = await cc3200Serial.sendCommandWithResponse(cmdPayload, {
+                    kind: 'packet',
+                    expectedLen: chunkSize,
+                    timeoutMs,
+                    callback: null,
+                    ctx: { cmdId: 'RawReadMemChunk' }
+                });
+
+                if (!res || !res.data || res.data.length !== chunkSize) {
+                    throw new Error(`raw_read chunk failed (got ${res?.data?.length ?? 0}, expected ${chunkSize})`);
+                }
+
+                chunks.push(res.data);
+                done += chunkSize;
+
+                if (onChunkInternal) {
+                    try {
+                        onChunkInternal({ storageId, offset: currentOffset, chunkSize, done, total, data: res.data });
+                    } catch (e) {
+                        /* ignore */
+                    }
+                }
+
+                currentOffset = (currentOffset + chunkSize) >>> 0;
+                remaining -= chunkSize;
+            }
+
+            return u8Concat(chunks);
+        }
+
+        class SffsFATParser {
+            static SFFS_HEADER_SIGNATURE = 0x534c;
+            static SFFS_FAT_METADATA2_OFFSET = 0x774;
+            static SFFS_FAT_FILE_NAME_ARRAY_OFFSET = 0x974;
+            static SFFS_FAT_TOKEN_ARRAY_OFFSET = 0x204; // Tokens start after metadata1 (128 entries * 4 bytes = 0x204)
+
+            static parseFatHeader(fatBytes) {
+                if (!fatBytes || fatBytes.length < 4) {
+                    return { isValid: false, fatCommitRevision: 0, headerSign: 0 };
+                }
+                const fatCommitRevision = le16From(fatBytes, 0);
+                const headerSign = le16From(fatBytes, 2);
+                if (fatCommitRevision === 0xFFFF || headerSign === 0xFFFF) {
+                    return { isValid: false, fatCommitRevision, headerSign };
+                }
+                if (headerSign !== this.SFFS_HEADER_SIGNATURE) {
+                    return { isValid: false, fatCommitRevision, headerSign };
+                }
+                return { isValid: true, fatCommitRevision, headerSign };
+            }
+
+            static parseFiles(fatBytes) {
+                const files = [];
+                const decoder = new TextDecoder('utf-8', { fatal: false });
+
+                /* Debug: Show token region (first 64 bytes of token array) */
+                const tokenRegionStart = this.SFFS_FAT_TOKEN_ARRAY_OFFSET;
+                const tokenRegionSample = fatBytes.slice(tokenRegionStart, tokenRegionStart + 64);
+                const tokenHex = Array.from(tokenRegionSample).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                logToConsole(`SFFS Token Region @0x${tokenRegionStart.toString(16)}: ${tokenHex}`, 'info');
+
+                for (let i = 0; i < 128; i++) {
+                    const metaOff = (i + 1) * 4;
+                    if (metaOff + 4 > fatBytes.length) break;
+                    const b0 = fatBytes[metaOff + 0];
+                    const b1 = fatBytes[metaOff + 1];
+                    const b2 = fatBytes[metaOff + 2];
+                    const b3 = fatBytes[metaOff + 3];
+
+                    const isAllFF = (b0 === 0xFF && b1 === 0xFF && b2 === 0xFF && b3 === 0xFF);
+                    const isEmptyMid = (b0 === 0xFF && b1 === i && b2 === 0xFF && b3 === 0x7F);
+                    if (isAllFF || isEmptyMid) {
+                        continue;
+                    }
+
+                    const index = b0;
+                    const sizeBlocks = b1;
+                    const startBlockLsb = b2;
+                    const flagsSbMsb = b3;
+                    if (index !== i) {
+                        throw new Error(`SFFS FAT entry index mismatch (entry ${i} has index ${index})`);
+                    }
+
+                    const flags = (flagsSbMsb >>> 4) & 0x0F;
+                    const startBlockMsb = flagsSbMsb & 0x0F;
+                    const mirrored = (flags & 0x4) === 0;
+                    const startBlock = ((startBlockMsb << 8) | startBlockLsb) >>> 0;
+                    const totalBlocks = mirrored ? (sizeBlocks * 2) : sizeBlocks;
+
+                    const meta2Off = this.SFFS_FAT_METADATA2_OFFSET + i * 4;
+                    if (meta2Off + 4 > fatBytes.length) {
+                        continue;
+                    }
+                    const fnameOffset = le16From(fatBytes, meta2Off + 0);
+                    const fnameLen = le16From(fatBytes, meta2Off + 2);
+                    const fnameAbs = this.SFFS_FAT_FILE_NAME_ARRAY_OFFSET + fnameOffset;
+                    const fnameBytes = (fnameAbs + fnameLen <= fatBytes.length)
+                        ? fatBytes.slice(fnameAbs, fnameAbs + fnameLen)
+                        : new Uint8Array(0);
+
+                    const fname = decoder.decode(fnameBytes);
+
+                    /* Read filename token (32-bit hash at token array offset) */
+                    const tokenOff = this.SFFS_FAT_TOKEN_ARRAY_OFFSET + i * 4;
+                    const token = (tokenOff + 4 <= fatBytes.length) 
+                        ? le32From(fatBytes, tokenOff) 
+                        : 0xFFFFFFFF;
+
+                    /* Check if filename is missing (meta2 = FF FF FF FF) */
+                    const hasFilename = !(fnameOffset === 0xFFFF && fnameLen === 0xFFFF);
+
+                    /* DEBUG: Log parsed entry with offset details */
+                    const hexFname = Array.from(fnameBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                    const meta2Hex = Array.from(fatBytes.slice(meta2Off, meta2Off + 4)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    const meta1Hex = `${b0.toString(16).padStart(2, '0')} ${b1.toString(16).padStart(2, '0')} ${b2.toString(16).padStart(2, '0')} ${b3.toString(16).padStart(2, '0')}`;
+                    const tokenHex = `0x${token.toString(16).padStart(8, '0')}`;
+                    const displayName = hasFilename ? `"${fname}"` : `[token ${tokenHex}]`;
+                    logToConsole(`SFFS FAT[${i}]: meta1=[${meta1Hex}] meta2@0x${meta2Off.toString(16)}=[${meta2Hex}] token=${tokenHex} fnameAbs=0x${fnameAbs.toString(16)} len=${fnameLen} name=${displayName}`, 'info');
+
+                    files.push({
+                        index,
+                        startBlock,
+                        sizeBlocks,
+                        mirrored,
+                        flags,
+                        totalBlocks,
+                        fname,
+                        token,
+                        hasFilename,
+                        fnameBytes
+                    });
+                }
+
+                return files;
+            }
+        }
+
+        class SffsClient {
+            constructor(cc) {
+                this.cc = cc;
+                this.storageId = CC3200_STORAGE.SFLASH;
+                this.flashBlockSizes = [0x100, 0x400, 0x1000, 0x4000, 0x10000];
+                this.slfsBlockSize = 4096;
+                this.SLFS_FILE_OPEN_FLAG_COMMIT = 0x1;
+                this.SLFS_MODE_OPEN_WRITE_CREATE_IF_NOT_EXIST = 3;
+            }
+
+            async getStorageInfo() {
+                /* If using flash image offline (no serial connection), return default info */
+                if (cc3200FlashImage && (!cc3200Serial || !espSerial || !espSerial.port)) {
+                    return {
+                        blockSize: 4096,
+                        numBlocks: Math.floor(cc3200FlashImage.size / 4096),
+                        storageId: this.storageId
+                    };
+                }
+                
+                const cmd = u8Concat([
+                    new Uint8Array([CC3200_OPCODES.GetStorageInfo]),
+                    be32(this.storageId >>> 0)
+                ]);
+                const res = await this.cc.sendCommandWithResponse(cmd, {
+                    kind: 'packet',
+                    expectedLen: null,
+                    timeoutMs: 2000,
+                    callback: null,
+                    ctx: { cmdId: 'SffsGetStorageInfo' }
+                });
+                const parsed = parseStorageInfoPayload(res?.data);
+                if (!parsed) {
+                    throw new Error('SFFS: GetStorageInfo returned short payload');
+                }
+                return parsed;
+            }
+
+            async readFatPair() {
+                const info = await this.getStorageInfo();
+                
+                /* Read FAT directly from SparseImage if available */
+                if (cc3200FlashImage) {
+                    await cc3200FlashImage.prefetch(0, 2 * info.blockSize);
+                    const bytes = await cc3200FlashImage.subarray_async(0, 2 * info.blockSize);
+                    
+                    if (bytes.length < 2 * info.blockSize) {
+                        throw new Error(`SFFS: FAT read short (got ${bytes.length}, expected ${2 * info.blockSize})`);
+                    }
+
+                    const fat0 = bytes.slice(0, info.blockSize);
+                    const fat1 = bytes.slice(info.blockSize, 2 * info.blockSize);
+                    return { info, fat0, fat1 };
+                }
+                
+                /* Fall back to rawReadRangeToU8 for hardware mode */
+                const bytes = await rawReadRangeToU8({
+                    storageId: this.storageId,
+                    offset: 0,
+                    size: (2 * info.blockSize) >>> 0
+                });
+
+                if (bytes.length < 2 * info.blockSize) {
+                    throw new Error(`SFFS: FAT read short (got ${bytes.length}, expected ${2 * info.blockSize})`);
+                }
+
+                const fat0 = bytes.slice(0, info.blockSize);
+                const fat1 = bytes.slice(info.blockSize, 2 * info.blockSize);
+                return { info, fat0, fat1 };
+            }
+
+            async listFiles({ inactive = false } = {}) {
+                const { info, fat0, fat1 } = await this.readFatPair();
+
+                const h0 = SffsFATParser.parseFatHeader(fat0);
+                const h1 = SffsFATParser.parseFatHeader(fat1);
+                const valids = [];
+                if (h0.isValid) valids.push({ idx: 0, header: h0, fat: fat0 });
+                if (h1.isValid) valids.push({ idx: 1, header: h1, fat: fat1 });
+                if (valids.length === 0) {
+                    throw new Error('SFFS: no valid FAT copies found');
+                }
+                valids.sort((a, b) => b.header.fatCommitRevision - a.header.fatCommitRevision);
+
+                let selected = valids[0];
+                if (inactive) {
+                    if (valids.length < 2) {
+                        throw new Error('SFFS: no valid inactive FAT copy found');
+                    }
+                    selected = valids[1];
+                }
+
+                const files = SffsFATParser.parseFiles(selected.fat);
+                
+                /* Store the blockSize in each file entry for direct access */
+                files.forEach(f => {
+                    f.blockSize = info.blockSize;
+                });
+
+                return {
+                    storageInfo: info,
+                    selectedFatIndex: selected.idx,
+                    fatCommitRevision: selected.header.fatCommitRevision,
+                    otherFatCommitRevision: (valids.length > 1) ? valids.find(v => v.idx !== selected.idx)?.header?.fatCommitRevision ?? null : null,
+                    files
+                };
+            }
+
+            async getFileInfo(filename) {
+                const nameBytes = new TextEncoder().encode(filename);
+                const hexName = Array.from(nameBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                logToConsole(`SFFS GetFileInfo: querying "${filename}" (${nameBytes.length} bytes: ${hexName})`, 'info');
+                const cmd = u8Concat([
+                    new Uint8Array([CC3200_OPCODES.GetFileInfo]),
+                    be32(nameBytes.length >>> 0),
+                    nameBytes
+                ]);
+                const res = await this.cc.sendCommandWithResponse(cmd, {
+                    kind: 'packet',
+                    expectedLen: null,
+                    timeoutMs: 1500,
+                    callback: null,
+                    ctx: { cmdId: 'SffsGetFileInfo' }
+                });
+                const p = res?.data ?? new Uint8Array(0);
+                if (p.length < 8) {
+                    logToConsole(`SFFS GetFileInfo response short: ${p.length} bytes`, 'info');
+                    return { exists: false, size: 0, raw: p };
+                }
+                const exists = p[0] === 0x01;
+                const size = be32From(p, 4);
+                return { exists, size, raw: p };
+            }
+
+            async getLastStatus() {
+                const res = await this.cc.sendCommandWithResponse(new Uint8Array([CC3200_OPCODES.GetLastStatus]), {
+                    kind: 'packet',
+                    expectedLen: null,
+                    timeoutMs: 1500,
+                    callback: null,
+                    ctx: { cmdId: 'SffsGetLastStatus' }
+                });
+                const p = res?.data ?? new Uint8Array(0);
+                const value = p.length > 0 ? p[0] : 0x00;
+                return { value, isOk: value === 0x40, raw: p };
+            }
+
+            async eraseFile(filename) {
+                const nameBytes = new TextEncoder().encode(filename);
+                const cmd = u8Concat([
+                    new Uint8Array([CC3200_OPCODES.EraseFile]),
+                    be32(0),
+                    nameBytes,
+                    new Uint8Array([0x00])
+                ]);
+                await this.cc.sendCommandWaitAck(cmd, 3000);
+                const st = await this.getLastStatus();
+                if (!st.isOk) {
+                    throw new Error(`SFFS: erase failed (status=0x${st.value.toString(16).padStart(2, '0')})`);
+                }
+            }
+
+            async openFile(filename, slfsFlags) {
+                const nameBytes = new TextEncoder().encode(filename);
+                const cmd = u8Concat([
+                    new Uint8Array([CC3200_OPCODES.StartUpload]),
+                    be32(slfsFlags >>> 0),
+                    be32(0),
+                    nameBytes,
+                    new Uint8Array([0x00, 0x00])
+                ]);
+                const res = await this.cc.sendCommandWithResponse(cmd, {
+                    kind: 'bytes',
+                    expectedBytes: 4,
+                    timeoutMs: 1500,
+                    callback: null,
+                    ctx: { cmdId: 'SffsOpenFile' }
+                });
+                return res?.data ?? new Uint8Array(0);
+            }
+
+            async closeFile(signatureBytes = null) {
+                let sig = signatureBytes;
+                if (!sig) {
+                    sig = new Uint8Array(256);
+                    sig.fill(0x46);
+                }
+                if (sig.length !== 256) {
+                    throw new Error('SFFS: signature must be 256 bytes');
+                }
+                const pad = new Uint8Array(63);
+                const cmd = u8Concat([
+                    new Uint8Array([CC3200_OPCODES.FinishUpload]),
+                    pad,
+                    sig,
+                    new Uint8Array([0x00])
+                ]);
+                await this.cc.sendCommandWaitAck(cmd, 4000);
+                const st = await this.getLastStatus();
+                if (!st.isOk) {
+                    throw new Error(`SFFS: close failed (status=0x${st.value.toString(16).padStart(2, '0')})`);
+                }
+            }
+
+            async readFile(filename, { onProgress } = {}) {
+                const finfo = await this.getFileInfo(filename);
+                if (!finfo.exists) {
+                    throw new Error(`SFFS: '${filename}' does not exist`);
+                }
+
+                await this.openFile(filename, 0);
+                const chunks = [];
+                let pos = 0;
+                const size = finfo.size >>> 0;
+
+                while (pos < size) {
+                    const toRead = Math.min(this.slfsBlockSize, size - pos);
+                    const cmd = u8Concat([
+                        new Uint8Array([CC3200_OPCODES.ReadFileChunk]),
+                        be32(pos >>> 0),
+                        be32(toRead >>> 0)
+                    ]);
+                    const timeoutMs = Math.max(2000, 1500 + Math.ceil(toRead / 50));
+                    const res = await this.cc.sendCommandWithResponse(cmd, {
+                        kind: 'packet',
+                        expectedLen: toRead,
+                        timeoutMs,
+                        callback: null,
+                        ctx: { cmdId: 'SffsReadFileChunk' }
+                    });
+                    if (!res?.data || res.data.length !== toRead) {
+                        throw new Error(`SFFS: read chunk failed (pos=${pos} got=${res?.data?.length ?? 0} expected=${toRead})`);
+                    }
+                    chunks.push(res.data);
+                    pos += toRead;
+                    if (onProgress) {
+                        try {
+                            onProgress({ done: pos, total: size });
+                        } catch (e) {
+                            /* ignore */
+                        }
+                    }
+                }
+
+                await this.closeFile();
+                return { filename, size, data: u8Concat(chunks) };
+            }
+
+            _calcOpenFlagsForWrite(fileLen, commit) {
+                let bsizeIdx = -1;
+                let blocks = 0;
+
+                for (let i = 0; i < this.flashBlockSizes.length; i++) {
+                    const bsize = this.flashBlockSizes[i];
+                    if ((bsize * 255) >= fileLen) {
+                        bsizeIdx = i;
+                        blocks = Math.ceil(fileLen / bsize);
+                        break;
+                    }
+                }
+                if (bsizeIdx < 0) {
+                    throw new Error('SFFS: file too big');
+                }
+
+                let flags = (((this.SLFS_MODE_OPEN_WRITE_CREATE_IF_NOT_EXIST & 0x0F) << 12) |
+                    ((bsizeIdx & 0x0F) << 8) |
+                    (blocks & 0xFF)) >>> 0;
+
+                if (commit) {
+                    flags |= ((this.SLFS_FILE_OPEN_FLAG_COMMIT & 0xFF) << 16) >>> 0;
+                }
+
+                return flags >>> 0;
+            }
+
+            async writeFile(filename, bytes, { commit = false, eraseIfExists = true, onProgress } = {}) {
+                if (!bytes || bytes.length === 0) {
+                    throw new Error('SFFS: will not upload empty file');
+                }
+
+                const finfo = await this.getFileInfo(filename);
+                if (eraseIfExists && finfo.exists) {
+                    await this.eraseFile(filename);
+                }
+
+                const slfsFlags = this._calcOpenFlagsForWrite(bytes.length, commit);
+                await this.openFile(filename, slfsFlags);
+
+                let pos = 0;
+                const total = bytes.length;
+                while (pos < total) {
+                    const chunk = bytes.slice(pos, pos + this.slfsBlockSize);
+                    const cmd = u8Concat([
+                        new Uint8Array([CC3200_OPCODES.FileChunk]),
+                        be32(pos >>> 0),
+                        chunk
+                    ]);
+                    await this.cc.sendCommandWaitAck(cmd, 4000);
+                    const st = await this.getLastStatus();
+                    if (!st.isOk) {
+                        throw new Error(`SFFS: write failed at pos=${pos} (status=0x${st.value.toString(16).padStart(2, '0')})`);
+                    }
+                    pos += chunk.length;
+                    if (onProgress) {
+                        try {
+                            onProgress({ done: pos, total });
+                        } catch (e) {
+                            /* ignore */
+                        }
+                    }
+                }
+
+                await this.closeFile();
+            }
+        }
+
+        function downloadU8AsFile(u8, filename) {
+            const safeName = (filename && filename.trim()) ? filename.trim() : 'download.bin';
+            const blob = new Blob([u8], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = safeName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+        }
+
+        async function rawReadRangeToFile(ctx) {
+            const blockSize = 4096;
+            const storageId = ctx.storageId >>> 0;
+            let offset = ctx.offset >>> 0;
+            let remaining = ctx.size >>> 0;
+            const fname = (ctx.filename && ctx.filename.trim()) ? ctx.filename.trim() : 'raw_read.bin';
+
+            const onChunk = (typeof ctx?.onChunk === 'function') ? ctx.onChunk : null;
+
+            let writable = null;
+            const chunks = [];
+            try {
+                if (ctx.fileHandle) {
+                    writable = await ctx.fileHandle.createWritable();
+                }
+
+                const total = remaining;
+                let done = 0;
+
+                while (remaining > 0) {
+                    const chunkSize = Math.min(blockSize, remaining);
+                    const cmdPayload = new Uint8Array([
+                        CC3200_OPCODES.RawRead,
+                        (storageId >>> 24) & 0xFF,
+                        (storageId >>> 16) & 0xFF,
+                        (storageId >>> 8) & 0xFF,
+                        storageId & 0xFF,
+                        (offset >>> 24) & 0xFF,
+                        (offset >>> 16) & 0xFF,
+                        (offset >>> 8) & 0xFF,
+                        offset & 0xFF,
+                        (chunkSize >>> 24) & 0xFF,
+                        (chunkSize >>> 16) & 0xFF,
+                        (chunkSize >>> 8) & 0xFF,
+                        chunkSize & 0xFF
+                    ]);
+
+                    const timeoutMs = Math.max(2000, 1500 + Math.ceil(chunkSize / 50));
+                    const res = await cc3200Serial.sendCommandWithResponse(cmdPayload, {
+                        kind: 'packet',
+                        expectedLen: chunkSize,
+                        timeoutMs,
+                        callback: null,
+                        ctx: { cmdId: 'RawReadChunk' }
+                    });
+
+                    if (!res || !res.data || res.data.length !== chunkSize) {
+                        throw new Error(`raw_read chunk failed (got ${res?.data?.length ?? 0}, expected ${chunkSize})`);
+                    }
+
+                    if (writable) {
+                        await writable.write(res.data);
+                    } else {
+                        chunks.push(res.data);
+                    }
+
+                    done += chunkSize;
+                    if (onChunk) {
+                        try {
+                            onChunk({
+                                storageId,
+                                offset,
+                                chunkSize,
+                                done,
+                                total,
+                                data: res.data
+                            });
+                        } catch (e) {
+                            /* ignore user callback errors */
+                        }
+                    }
+
+                    offset = (offset + chunkSize) >>> 0;
+                    remaining -= chunkSize;
+
+                    if ((done % (blockSize * 32)) === 0 || done === total) {
+                        logToConsole(`RawRead: ${done}/${total} bytes (${(done*100/total).toFixed(2)}%)`, 'info');
+                    }
+                }
+
+                if (writable) {
+                    await writable.close();
+                    logToConsole(`RawRead: saved '${fname}' (${total} bytes)`, 'info');
+                } else {
+                    downloadU8AsFile(u8Concat(chunks), fname);
+                    logToConsole(`RawRead: downloaded '${fname}' (${total} bytes)`, 'info');
+                }
+            } catch (err) {
+                try {
+                    if (writable) {
+                        await writable.close();
+                        logToConsole(`RawRead: saved partial '${fname}' (${done} bytes)`, 'info');
+                    } else if (chunks.length > 0) {
+                        downloadU8AsFile(u8Concat(chunks), fname);
+                        logToConsole(`RawRead: downloaded partial '${fname}' (${done} bytes)`, 'info');
+                    }
+                } catch (e) {
+                    /* ignore */
+                }
+                throw err;
+            }
+        }
+
+        function updateSendMode() {
+            sendMode = document.querySelector('input[name="sendMode"]:checked').value;
+        }
+
+        function initCCTabs() {
+            const header = document.getElementById('ccTabsHeader');
+            const body = document.getElementById('ccTabsBody');
+            if (!header || !body) return;
+
+            header.innerHTML = '';
+            body.innerHTML = '';
+
+            for (const cmd of CC_COMMANDS) {
+                const btn = document.createElement('button');
+                btn.textContent = cmd.title;
+                btn.setAttribute('data-tab', cmd.id);
+                btn.style.padding = '8px 12px';
+                btn.style.border = '1px solid #374151';
+                btn.style.borderRadius = '6px';
+                btn.style.cursor = 'pointer';
+                btn.style.background = '#1f2937';
+                btn.style.color = '#e5e7eb';
+                btn.style.fontWeight = '700';
+                btn.onclick = () => setActiveCCTab(cmd.id);
+                header.appendChild(btn);
+
+                const panel = document.createElement('div');
+                panel.id = `ccTabPanel_${cmd.id}`;
+                panel.style.display = 'none';
+                panel.style.padding = '10px';
+                panel.style.border = '1px solid #374151';
+                panel.style.borderRadius = '6px';
+                panel.style.background = 'rgba(15, 23, 42, 0.6)';
+                if (cmd.render) {
+                    cmd.render(panel);
+                }
+                body.appendChild(panel);
+            }
+
+            if (CC_COMMANDS.length > 0) {
+                setActiveCCTab(CC_COMMANDS[0].id);
+            }
+
+            wireCCTabButtons();
+        }
+
+        function setActiveCCTab(tabId) {
+            const header = document.getElementById('ccTabsHeader');
+            const body = document.getElementById('ccTabsBody');
+            if (!header || !body) return;
+
+            const buttons = header.querySelectorAll('button[data-tab]');
+            for (const b of buttons) {
+                const active = b.getAttribute('data-tab') === tabId;
+                b.style.background = active ? '#2563eb' : '#1f2937';
+                b.style.borderColor = active ? '#3b82f6' : '#374151';
+            }
+
+            for (const cmd of CC_COMMANDS) {
+                const panel = document.getElementById(`ccTabPanel_${cmd.id}`);
+                if (!panel) continue;
+                panel.style.display = cmd.id === tabId ? 'block' : 'none';
+            }
+        }
+
+        function getTabStorageId() {
+            const el = document.getElementById('ccTabStorageSelect');
+            if (!el) return CC3200_STORAGE.SRAM;
+            const val = parseInt(el.value, 10);
+            if (isNaN(val)) return CC3200_STORAGE.SRAM;
+            return val;
+        }
+
+        function wireCCTabButtons() {
+            const btnStorage = document.getElementById('btnStorageReadInfo');
+            if (btnStorage) btnStorage.onclick = () => ccStorageReadInfoAndRender();
+
+            const btnSffsRefresh = document.getElementById('btnSffsRefresh');
+            if (btnSffsRefresh) btnSffsRefresh.onclick = () => sffsRefreshAndRender();
+
+            const btnSffsRead = document.getElementById('btnSffsRead');
+            if (btnSffsRead) btnSffsRead.onclick = () => sffsReadAndDownload();
+
+            const btnSffsWrite = document.getElementById('btnSffsWrite');
+            if (btnSffsWrite) btnSffsWrite.onclick = () => sffsWriteFromFileInput();
+
+            const btnSffsErase = document.getElementById('btnSffsErase');
+            if (btnSffsErase) btnSffsErase.onclick = () => sffsErase();
+
+            const btnVer = document.getElementById('btnRun_GetVersion');
+            if (btnVer) btnVer.onclick = () => runCCCommandById('GetVersion');
+
+            const btnList = document.getElementById('btnRun_GetStorageList');
+            if (btnList) btnList.onclick = () => runCCCommandById('GetStorageList');
+
+            const btnInfo = document.getElementById('btnRun_GetStorageInfo');
+            if (btnInfo) btnInfo.onclick = () => runCCCommandById('GetStorageInfo');
+
+            const btnRawRead = document.getElementById('btnRun_RawRead');
+            if (btnRawRead) btnRawRead.onclick = () => runCCCommandById('RawRead');
+
+            const btnSwitchToApps = document.getElementById('btnRun_SwitchToApps');
+            if (btnSwitchToApps) btnSwitchToApps.onclick = () => {
+                const delayInput = document.getElementById('ccSwitchToAppsDelay');
+                const delayTicks = parseInt(delayInput?.value || '26666667', 10);
+                runSwitchToAppsSequence(delayTicks);
+            };
+        }
+
+        let sffsClient = null;
+
+        function setSffsStatus(text) {
+            const el = document.getElementById('sffsStatus');
+            if (el) el.textContent = text;
+        }
+
+        async function runSwitchToAppsSequence(delayTicks) {
+            try {
+                setSffsStatus('Switch to APPS: initializing...');
+                logToConsole('Switch to APPS sequence starting...', 'info');
+
+                /* Step 1: Send Switch UART to APPS command */
+                const cmd = CC_COMMANDS.find(c => c.id === 'SwitchToApps');
+                if (!cmd) {
+                    throw new Error('SwitchToApps command not found');
+                }
+                const payload = cmd.build({ delayTicks });
+                logToConsole(`Sending Switch to APPS command (delay=${delayTicks} ticks)...`, 'info');
+                const res = await cc3200Serial.sendCommandWithResponse(payload, {
+                    kind: 'bytes',
+                    expectedBytes: 0,
+                    timeoutMs: 2000
+                });
+                logToConsole('Switch to APPS: ACK received from main processor', 'info');
+
+                /* Step 2: Wait for network processor to be ready (delay duration) */
+                setSffsStatus(`Switch to APPS: waiting ${delayTicks} ticks for NWP reboot...`);
+                const waitTime = Math.ceil(delayTicks / 26666667 * 1000); /* Convert ticks to approximate ms */
+                logToConsole(`Waiting ${waitTime}ms for network processor to initialize...`, 'info');
+                await new Promise(resolve => setTimeout(resolve, Math.max(1000, waitTime)));
+
+                /* Step 3-5: Send break signals (up to 4 times) and wait for NWP ACK */
+                let nwpReady = false;
+                for (let i = 1; i <= 40; i++) {
+                    setSffsStatus(`Switch to APPS: sending break signal ${i}/4...`);
+                    logToConsole(`Break signal ${i}/4: asserting break on RX line...`, 'info');
+                    
+                    /* Set break (spacing condition) */
+                    if (espSerial && espSerial.port) {
+                        await espSerial.sendBreak();
+                    }
+
+                    /* Wait for ACK from network processor (they check during power-up) */
+                    try {
+                        logToConsole(`Break signal ${i}/4: listening for NWP ACK (100ms)...`, 'info');
+                        /* Give NWP 100ms to sense the break and respond */
+                        await new Promise(resolve => setTimeout(resolve, 500));
+
+                        /* Check if we got an ACK (0x00 0xCC) in the receive buffer */
+                        /* The processCC3200Response will handle this automatically */
+                        if (cc3200Serial.cc3200State === 'waitingForAck' || cc3200Serial.rxBuffer.length >= 2) {
+                            const ackBytes = cc3200Serial.rxBuffer.slice(cc3200Serial.rxBuffer.length - 2);
+                            if (ackBytes[0] === 0x00 && ackBytes[1] === 0xCC) {
+                                nwpReady = true;
+                                logToConsole(`Break signal ${i}/4: NWP ACK received!`, 'info');
+                                /* Clear the buffer to avoid confusion */
+                                cc3200Serial.rxBuffer = new Uint8Array(0);
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        logToConsole(`Break signal ${i}/4: timeout listening for ACK, continuing...`, 'info');
+                    }
+
+                    /* Deassert break before next iteration */
+                    logToConsole(`Break signal ${i}/4: deasserting break...`, 'info');
+                    /* Break is naturally deasserting after the condition ends */
+                    
+                    if (i < 4) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                    }
+                }
+
+                if (nwpReady) {
+                    setSffsStatus('Switch to APPS: NWP bootloader ready!');
+                    logToConsole('Switch to APPS: Network processor bootloader is ready for communication', 'info');
+                } else {
+                    setSffsStatus('Switch to APPS: break signal sent (check NWP response)');
+                    logToConsole('Switch to APPS: break signals sent, NWP bootloader should be initializing', 'info');
+                }
+
+            } catch (err) {
+                setSffsStatus(`Switch to APPS failed: ${err.message}`);
+                logToConsole(`Switch to APPS error: ${err.message}`, 'error');
+            }
+        }
+
+        function ensureSffsClient() {
+            /* Allow working with flash image only (no serial connection) */
+            if (cc3200FlashImage && !cc3200Serial) {
+                /* Create a mock CC3200Serial for flash image access */
+                if (!sffsClient) {
+                    const mockCC3200 = {
+                        sendCommandWithResponse: async () => {
+                            throw new Error('Cannot send commands when using flash image - use SparseImage directly');
+                        }
+                    };
+                    sffsClient = new SffsClient(mockCC3200);
+                }
+                return sffsClient;
+            }
+            
+            /* Normal mode: require serial connection */
+            if (!cc3200Serial || !espSerial || !espSerial.port) {
+                throw new Error('Not connected');
+            }
+            if (!sffsClient) {
+                sffsClient = new SffsClient(cc3200Serial);
+            }
+            return sffsClient;
+        }
+
+        function renderSffsList(result) {
+            const el = document.getElementById('sffsList');
+            if (!el) return;
+
+            const files = result?.files ?? [];
+            if (!files.length) {
+                el.innerHTML = `<div style="color:#9ca3af;">No files found in FAT r${result?.fatCommitRevision ?? '?'}.</div>`;
+                return;
+            }
+
+            const rows = files
+                .slice()
+                .sort((a, b) => a.index - b.index)
+                .map(f => {
+                    const name = escapeHtml(f.fname);
+                    const ms = f.mirrored ? 'yes' : 'no';
+                    const fileKey = `sffs_${f.index}`;
+                    return `
+                        <tr>
+                            <td style="padding:6px 8px; border-bottom:1px solid #374151;">${f.index}</td>
+                            <td style="padding:6px 8px; border-bottom:1px solid #374151;">${f.startBlock}</td>
+                            <td style="padding:6px 8px; border-bottom:1px solid #374151;">${f.sizeBlocks}</td>
+                            <td style="padding:6px 8px; border-bottom:1px solid #374151;">${ms}</td>
+                            <td style="padding:6px 8px; border-bottom:1px solid #374151;">0x${f.flags.toString(16)}</td>
+                            <td style="padding:6px 8px; border-bottom:1px solid #374151; font-family: 'Courier New', monospace;">
+                                <a href="#" class="sffsFileLink" data-filename="${escapeHtmlAttr(f.fname)}" style="color:#3b82f6; cursor:pointer; text-decoration:none; word-break:break-all;">${name}</a>
+                                <button class="sffsDeleteBtn" data-filename="${escapeHtmlAttr(f.fname)}" style="margin-left:8px; padding:4px 8px; background:#ef4444; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:12px;" title="Delete file">🗑️</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+            const hdr = `
+                <div style="margin-bottom:10px; color:#9ca3af; font-size:12px;">
+                    FAT r${result.fatCommitRevision} (copy #${result.selectedFatIndex})
+                    ${result.otherFatCommitRevision !== null ? `| other r${result.otherFatCommitRevision}` : ''}
+                    | block_size=${result.storageInfo.blockSize} block_count=${result.storageInfo.blockCount}
+                </div>
+            `;
+
+            el.innerHTML = hdr + `
+                <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                    <thead>
+                        <tr style="text-align:left; color:#9ca3af;">
+                            <th style="padding:6px 8px; border-bottom:1px solid #374151;">idx</th>
+                            <th style="padding:6px 8px; border-bottom:1px solid #374151;">start</th>
+                            <th style="padding:6px 8px; border-bottom:1px solid #374151;">size(BLK)</th>
+                            <th style="padding:6px 8px; border-bottom:1px solid #374151;">mirror</th>
+                            <th style="padding:6px 8px; border-bottom:1px solid #374151;">flags</th>
+                            <th style="padding:6px 8px; border-bottom:1px solid #374151;">name</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+            `;
+
+            /* Wire up file download links */
+            const downloadLinks = el.querySelectorAll('a.sffsFileLink');
+            for (const link of downloadLinks) {
+                link.onclick = (e) => {
+                    e.preventDefault();
+                    const filename = link.getAttribute('data-filename');
+                    sffsReadAndDownloadFile(filename);
+                };
+            }
+
+            /* Wire up delete buttons */
+            const deleteButtons = el.querySelectorAll('button.sffsDeleteBtn');
+            for (const btn of deleteButtons) {
+                btn.onclick = async (e) => {
+                    e.preventDefault();
+                    const filename = btn.getAttribute('data-filename');
+                    if (confirm(`Delete file: ${filename}?`)) {
+                        await sffsDeleteFile(filename);
+                    }
+                };
+            }
+        }
+
+        async function sffsRefreshAndRender() {
+            try {
+                setSffsStatus('Reading FAT...');
+                const inactiveEl = document.getElementById('sffsInactive');
+                const inactive = !!inactiveEl?.checked;
+                const client = ensureSffsClient();
+                const res = await client.listFiles({ inactive });
+                renderSffsList(res);
+                setSffsStatus(`Ready (r${res.fatCommitRevision}, ${res.files.length} files)`);
+                logToConsole(`SFFS: listed ${res.files.length} files (FAT r${res.fatCommitRevision})`, 'info');
+            } catch (err) {
+                setSffsStatus(`Error: ${err?.message || err}`);
+                logToConsole(`SFFS: list failed (${err?.message || err})`, 'info');
+            }
+        }
+
+        async function sffsReadAndDownload() {
+            try {
+                const client = ensureSffsClient();
+                const nameEl = document.getElementById('sffsFilename');
+                const filename = (nameEl?.value ?? '').trim();
+                if (!filename) {
+                    throw new Error('SFFS: filename required');
+                }
+
+                setSffsStatus(`Reading ${filename}...`);
+                const finfo = await client.getFileInfo(filename);
+                if (!finfo.exists) {
+                    throw new Error(`SFFS: not found (${filename})`);
+                }
+
+                const res = await client.readFile(filename, {
+                    onProgress: (p) => {
+                        setSffsStatus(`Reading ${filename}: ${p.done}/${p.total} bytes (${(p.done * 100 / p.total).toFixed(2)}%)`);
+                    }
+                });
+
+                const base = filename.split('/').filter(Boolean).pop() || 'download.bin';
+                const suggestedName = base;
+
+                if (window.showSaveFilePicker) {
+                    try {
+                        const fileHandle = await window.showSaveFilePicker({
+                            suggestedName,
+                            types: [{
+                                description: 'Binary',
+                                accept: { 'application/octet-stream': ['.bin', '.dat', '.txt'] }
+                            }]
+                        });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(res.data);
+                        await writable.close();
+                        setSffsStatus(`Saved ${suggestedName} (${res.size} bytes)`);
+                        logToConsole(`SFFS: saved '${suggestedName}' (${res.size} bytes)`, 'info');
+                        return;
+                    } catch (e) {
+                        /* fall back to download */
+                    }
+                }
+
+                downloadU8AsFile(res.data, suggestedName);
+                setSffsStatus(`Downloaded ${suggestedName} (${res.size} bytes)`);
+                logToConsole(`SFFS: downloaded '${suggestedName}' (${res.size} bytes)`, 'info');
+            } catch (err) {
+                setSffsStatus(`Error: ${err?.message || err}`);
+                logToConsole(`SFFS: read failed (${err?.message || err})`, 'info');
+            }
+        }
+
+        async function sffsWriteFromFileInput() {
+            try {
+                const client = ensureSffsClient();
+                const nameEl = document.getElementById('sffsFilename');
+                const filename = (nameEl?.value ?? '').trim();
+                if (!filename) {
+                    throw new Error('SFFS: filename required');
+                }
+
+                const uploadEl = document.getElementById('sffsUpload');
+                const file = uploadEl?.files?.[0];
+                if (!file) {
+                    throw new Error('SFFS: select a local file first');
+                }
+
+                const commitEl = document.getElementById('sffsCommit');
+                const commit = !!commitEl?.checked;
+
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                setSffsStatus(`Uploading ${file.name} -> ${filename} (${bytes.length} bytes)...`);
+
+                await client.writeFile(filename, bytes, {
+                    commit,
+                    eraseIfExists: true,
+                    onProgress: (p) => {
+                        setSffsStatus(`Uploading ${filename}: ${p.done}/${p.total} bytes (${(p.done * 100 / p.total).toFixed(2)}%)`);
+                    }
+                });
+
+                setSffsStatus(`Upload complete (${bytes.length} bytes)`);
+                logToConsole(`SFFS: uploaded '${filename}' (${bytes.length} bytes) commit=${commit}`, 'info');
+                await sffsRefreshAndRender();
+            } catch (err) {
+                setSffsStatus(`Error: ${err?.message || err}`);
+                logToConsole(`SFFS: write failed (${err?.message || err})`, 'info');
+            }
+        }
+
+        async function sffsErase() {
+            try {
+                const client = ensureSffsClient();
+                const nameEl = document.getElementById('sffsFilename');
+                const filename = (nameEl?.value ?? '').trim();
+                if (!filename) {
+                    throw new Error('SFFS: filename required');
+                }
+
+                setSffsStatus(`Erasing ${filename}...`);
+                await client.eraseFile(filename);
+                setSffsStatus('Erase complete');
+                logToConsole(`SFFS: erased '${filename}'`, 'info');
+                await sffsRefreshAndRender();
+            } catch (err) {
+                setSffsStatus(`Error: ${err?.message || err}`);
+                logToConsole(`SFFS: erase failed (${err?.message || err})`, 'info');
+            }
+        }
+
+        async function sffsReadAndDownloadFile(filename) {
+            try {
+                const client = ensureSffsClient();
+                setSffsStatus(`Reading ${filename}...`);
+                
+                /* Initialize SparseImage if needed */
+                if (!cc3200FlashImage) {
+                    await initializeFlashImage();
+                }
+                
+                /* Find file in FAT for block location */
+                const listResult = await client.listFiles({ inactive: false });
+                const fatEntry = listResult.files.find(f => f.fname === filename);
+                
+                if (!fatEntry) {
+                    throw new Error(`SFFS: file not found in FAT (${filename})`);
+                }
+
+                /* Calculate byte offset from FAT entry */
+                const blockSize = fatEntry.blockSize;
+                const headerOffset = fatEntry.startBlock * blockSize;
+                
+                /* First, read the 8-byte SFFS file header to get actual file size */
+                logToConsole(`SFFS: reading file header at 0x${headerOffset.toString(16)}`, 'info');
+                
+                /* Use SparseImage to read header */
+                await cc3200FlashImage.prefetch(headerOffset, 8);
+                const header = await cc3200FlashImage.subarray_async(headerOffset, headerOffset + 8);
+
+                /* Parse file size from header (first 4 bytes, little-endian) */
+                const fileSize = le32From(header, 0) & 0xffffff;
+                const headerHex = Array.from(header).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                
+                logToConsole(`SFFS: file header [${headerHex}] fileSize=${fileSize} bytes`, 'info');
+                logToConsole(`SFFS: reading '${filename}' startBlock=${fatEntry.startBlock} (0x${fatEntry.startBlock.toString(16)}) dataOffset=0x${(headerOffset + 8).toString(16)} fileSize=${fileSize}`, 'info');
+
+                /* Read file data starting after the 8-byte header using SparseImage */
+                const dataOffset = headerOffset + 8;
+                
+                /* Prefetch file data in chunks to show progress */
+                const blockReadSize = 4096;
+                let pos = 0;
+                while (pos < fileSize) {
+                    const toRead = Math.min(blockReadSize, fileSize - pos);
+                    await cc3200FlashImage.prefetch(dataOffset + pos, toRead);
+                    pos += toRead;
+                    setSffsStatus(`Reading ${filename}: ${pos}/${fileSize} bytes (${(pos * 100 / fileSize).toFixed(2)}%)`);
+                }
+
+                /* Get the complete file data from SparseImage */
+                const fileData = await cc3200FlashImage.subarray_async(dataOffset, dataOffset + fileSize);
+
+                const base = filename.split('/').filter(Boolean).pop() || 'download.bin';
+                const suggestedName = base;
+
+                if (window.showSaveFilePicker) {
+                    try {
+                        const fileHandle = await window.showSaveFilePicker({
+                            suggestedName,
+                            types: [{
+                                description: 'Binary',
+                                accept: { 'application/octet-stream': ['.bin', '.dat', '.txt'] }
+                            }]
+                        });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(fileData);
+                        await writable.close();
+                        setSffsStatus(`Saved ${suggestedName} (${fileSize} bytes)`);
+                        logToConsole(`SFFS: saved '${suggestedName}' (${fileSize} bytes)`, 'info');
+                        return;
+                    } catch (e) {
+                        /* fall back to download */
+                    }
+                }
+
+                downloadU8AsFile(fileData, suggestedName);
+                setSffsStatus(`Downloaded ${suggestedName} (${fileSize} bytes)`);
+                logToConsole(`SFFS: downloaded '${suggestedName}' (${fileSize} bytes)`, 'info');
+            } catch (err) {
+                setSffsStatus(`Error: ${err?.message || err}`);
+                logToConsole(`SFFS: read failed (${err?.message || err})`, 'info');
+            }
+        }
+
+        async function sffsDeleteFile(filename) {
+            try {
+                const client = ensureSffsClient();
+                setSffsStatus(`Deleting ${filename}...`);
+                await client.eraseFile(filename);
+                setSffsStatus('Delete complete');
+                logToConsole(`SFFS: deleted '${filename}'`, 'info');
+                await sffsRefreshAndRender();
+            } catch (err) {
+                setSffsStatus(`Error: ${err?.message || err}`);
+                logToConsole(`SFFS: delete failed (${err?.message || err})`, 'info');
+            }
+        }
+
+        function formatHexLine(u8) {
+            let s = '';
+            for (let i = 0; i < u8.length; i++) {
+                s += u8[i].toString(16).padStart(2, '0').toUpperCase() + ' ';
+            }
+            return s.trim();
+        }
+
+        function formatBytes(n) {
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(2)} KiB`;
+            if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
+            return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
+        }
+
+        function fmtVerTuple(arr) {
+            return `${arr[0]}.${arr[1]}.${arr[2]}.${arr[3]}`;
+        }
+
+        function fmtHexBytes(arr) {
+            return Array.from(arr).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(':');
+        }
+
+        function onGetVersion(ctx, payload) {
+            if (payload.length < 20) {
+                logToConsole(`GetVersion: short payload (${payload.length}): ${formatHexLine(payload)}`, 'info');
+                return;
+            }
+
+            const bootloader = payload.slice(0, 4);
+            const nwp = payload.slice(4, 8);
+            const mac = payload.slice(8, 12);
+            const phy = payload.slice(12, 16);
+            const chipType = payload.slice(16, 20);
+            const tail = payload.slice(20);
+
+            const isCc3200 = (chipType[0] & 0x10) !== 0;
+            logToConsole(`GetVersion: bootloader=${fmtVerTuple(bootloader)} nwp=${fmtVerTuple(nwp)} phy=${fmtVerTuple(phy)} chip_type=${formatHexLine(chipType)} is_cc3200=${isCc3200}`, 'info');
+            logToConsole(`GetVersion: mac=${fmtHexBytes(mac)} tail(${tail.length})=${formatHexLine(tail)}`, 'info');
+        }
+
+        function onGetStorageList(ctx, bytes) {
+            const v = bytes[0];
+            const flash = (v & 0x02) !== 0;
+            const sflash = (v & 0x04) !== 0;
+            const sram = (v & 0x80) !== 0;
+            logToConsole(`GetStorageList: 0x${v.toString(16).padStart(2, '0')} (flash=${flash} sflash=${sflash} sram=${sram})`, 'info');
+        }
+
+        function onGetStorageInfo(ctx, payload) {
+            if (payload.length < 4) {
+                logToConsole(`GetStorageInfo: short payload (${payload.length})`, 'info');
+                return;
+            }
+            const bsize = (payload[0] << 8) | payload[1];
+            const bcount = (payload[2] << 8) | payload[3];
+            const cap = bsize * bcount;
+            const tail = payload.slice(4);
+            logToConsole(`GetStorageInfo(storage_id=${ctx.storageId}): block_size=${bsize} block_count=${bcount} capacity=${formatBytes(cap)}`, 'info');
+            if (tail.length > 0) {
+                logToConsole(`GetStorageInfo: tail(${tail.length})=${formatHexLine(tail)}`, 'info');
+            }
+        }
+
+        function parseStorageInfoPayload(payload) {
+            if (!payload || payload.length < 4) {
+                return null;
+            }
+            const blockSize = (payload[0] << 8) | payload[1];
+            const blockCount = (payload[2] << 8) | payload[3];
+            const capacity = blockSize * blockCount;
+            return { blockSize, blockCount, capacity, tail: payload.slice(4) };
+        }
+
+        function setStorageStatus(text) {
+            const el = document.getElementById('storageStatus');
+            if (el) el.textContent = text;
+        }
+
+        function renderStoragePanes(storages, maskByte) {
+            const panesEl = document.getElementById('storagePanes');
+            if (!panesEl) return;
+
+            const maskHex = `0x${(maskByte ?? 0).toString(16).padStart(2, '0')}`;
+            if (!storages || storages.length === 0) {
+                panesEl.innerHTML = `<div style="padding:10px; border:1px solid #374151; border-radius:6px; background: rgba(15, 23, 42, 0.6); color:#9ca3af;">No storages reported (mask=${maskHex}).</div>`;
+                return;
+            }
+
+            panesEl.innerHTML = storages.map(s => {
+                const cap = s.capacity ?? 0;
+                const infoLine = s.error
+                    ? `<div style="color:#fca5a5;">Info error: ${escapeHtml(s.error)}</div>`
+                    : `<div>block_size=${s.blockSize} block_count=${s.blockCount} capacity=${formatBytes(cap)} (${cap} bytes)</div>`;
+
+                const tailLine = (!s.error && s.tail && s.tail.length)
+                    ? `<div style="color:#9ca3af; font-size:12px;">tail(${s.tail.length})=${formatHexLine(s.tail)}</div>`
+                    : '';
+
+                const readDisabled = (!!s.error || !Number.isFinite(cap) || cap <= 0 || cap > 0xFFFFFFFF);
+                const readBtnStyle = readDisabled
+                    ? 'padding: 8px 14px; background: #374151; color: #9ca3af; border: none; border-radius: 6px; cursor: not-allowed; font-weight: 700;'
+                    : 'padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;';
+
+                const readTitle = readDisabled
+                    ? (cap > 0xFFFFFFFF ? 'Capacity > 4GiB not supported' : 'Read disabled')
+                    : 'Read full storage to .bin';
+
+                return `
+                    <div style="padding:10px; border:1px solid #374151; border-radius:6px; background: rgba(15, 23, 42, 0.6);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <div style="font-weight:800;">${escapeHtml(s.name)} (storage_id=${s.storageId})</div>
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <button class="btnStorageRead" data-storage-id="${s.storageId}" data-storage-name="${escapeHtmlAttr(s.name)}" data-storage-size="${cap}" style="${readBtnStyle}" title="${escapeHtmlAttr(readTitle)}" ${readDisabled ? 'disabled' : ''}>Read</button>
+                                <div class="storageProgress" style="width:160px; height:10px; border:1px solid #374151; border-radius:999px; overflow:hidden; background:#111827; display:none;">
+                                    <div class="storageProgressBar" style="height:100%; width:0%; background:#10b981;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="margin-top:6px; font-family: 'Courier New', monospace; font-size: 13px; color:#e5e7eb;">
+                            ${infoLine}
+                            ${tailLine}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            const btns = panesEl.querySelectorAll('button.btnStorageRead');
+            for (const btn of btns) {
+                btn.onclick = async () => {
+                    const storageId = parseInt(btn.getAttribute('data-storage-id') || '0', 10);
+                    const storageName = btn.getAttribute('data-storage-name') || 'storage';
+                    const size = parseInt(btn.getAttribute('data-storage-size') || '0', 10);
+
+                    const pane = btn.closest('div');
+                    const prog = pane ? pane.querySelector('div.storageProgress') : null;
+                    const bar = prog ? prog.querySelector('div.storageProgressBar') : null;
+                    await readFullStorageToFile(storageId, storageName, size, { buttonEl: btn, progressEl: prog, progressBarEl: bar });
+                };
+            }
+        }
+
+        function escapeHtml(s) {
+            const t = String(s ?? '');
+            return t
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function escapeHtmlAttr(s) {
+            return escapeHtml(s).replaceAll('`', '&#96;');
+        }
+
+        async function ccStorageReadInfoAndRender() {
+            if (!cc3200Serial || !espSerial || !espSerial.port) {
+                logToConsole('Not connected', 'info');
+                return;
+            }
+
+            setStorageStatus('Reading storage list...');
+            try {
+                const listRes = await cc3200Serial.sendCommandWithResponse(
+                    new Uint8Array([CC3200_OPCODES.GetStorageList]),
+                    { kind: 'bytes', expectedBytes: 1, timeoutMs: 1000, callback: null, ctx: { cmdId: 'StorageList' } }
+                );
+
+                const mask = listRes?.data?.[0] ?? 0;
+                logToConsole(`Storage: list mask=0x${mask.toString(16).padStart(2, '0')}`, 'info');
+
+                const present = CC3200_STORAGE_BITS.filter(d => (mask & d.bit) !== 0);
+                if (present.length === 0) {
+                    renderStoragePanes([], mask);
+                    setStorageStatus('No storages present');
+                    return;
+                }
+
+                const storages = [];
+                for (const def of present) {
+                    setStorageStatus(`Reading ${def.name} info...`);
+                    try {
+                        const infoCmd = new Uint8Array([
+                            CC3200_OPCODES.GetStorageInfo,
+                            (def.storageId >>> 24) & 0xFF,
+                            (def.storageId >>> 16) & 0xFF,
+                            (def.storageId >>> 8) & 0xFF,
+                            def.storageId & 0xFF
+                        ]);
+                        const infoRes = await cc3200Serial.sendCommandWithResponse(
+                            infoCmd,
+                            { kind: 'packet', expectedLen: null, timeoutMs: 2000, callback: null, ctx: { cmdId: 'StorageInfo', storageId: def.storageId } }
+                        );
+
+                        const parsed = parseStorageInfoPayload(infoRes?.data);
+                        if (!parsed) {
+                            storages.push({ name: def.name, storageId: def.storageId, error: 'short payload', blockSize: 0, blockCount: 0, capacity: 0, tail: new Uint8Array(0) });
+                        } else {
+                            storages.push({ name: def.name, storageId: def.storageId, ...parsed });
+                            logToConsole(`Storage: ${def.name} block_size=${parsed.blockSize} block_count=${parsed.blockCount} cap=${parsed.capacity}`, 'info');
+                        }
+                    } catch (err) {
+                        storages.push({ name: def.name, storageId: def.storageId, error: err?.message || String(err), blockSize: 0, blockCount: 0, capacity: 0, tail: new Uint8Array(0) });
+                        logToConsole(`Storage: ${def.name} info failed (${err?.message || err})`, 'info');
+                    }
+                }
+
+                renderStoragePanes(storages, mask);
+                setStorageStatus(`Ready (mask=0x${mask.toString(16).padStart(2, '0')})`);
+            } catch (err) {
+                setStorageStatus(`Error: ${err?.message || err}`);
+                logToConsole(`Storage: Read Info failed (${err?.message || err})`, 'info');
+            }
+        }
+
+        async function readFullStorageToFile(storageId, storageName, size, ui = null) {
+            if (!cc3200Serial || !espSerial || !espSerial.port) {
+                logToConsole('Not connected', 'info');
+                return;
+            }
+            if (!Number.isFinite(size) || size <= 0) {
+                logToConsole(`Storage: invalid size for ${storageName}`, 'info');
+                return;
+            }
+            if (size > 0xFFFFFFFF) {
+                logToConsole(`Storage: ${storageName} too large (${size} bytes)`, 'info');
+                return;
+            }
+
+            const sid = storageId >>> 0;
+            const safeBase = String(storageName || 'storage').toLowerCase().replaceAll(/[^a-z0-9._-]+/g, '_');
+            const suggestedName = `${safeBase}_sid${sid}_len${size}.bin`;
+
+            const ctx = {
+                cmdId: 'StorageRead',
+                storageId: sid,
+                offset: 0,
+                size: size >>> 0,
+                filename: suggestedName,
+                fileHandle: null,
+                onChunk: null
+            };
+
+            const setProgress = (frac) => {
+                if (!ui || !ui.progressEl || !ui.progressBarEl) return;
+                const v = Math.max(0, Math.min(1, frac || 0));
+                ui.progressEl.style.display = 'block';
+                ui.progressBarEl.style.width = `${(v * 100).toFixed(2)}%`;
+            };
+
+            if (ui && ui.buttonEl) {
+                ui.buttonEl.disabled = true;
+            }
+            setProgress(0);
+
+            ctx.onChunk = (info) => {
+                const total = info?.total ?? size;
+                const done = info?.done ?? 0;
+                if (total > 0) {
+                    setProgress(done / total);
+                }
+            };
+
+            if (window.showSaveFilePicker) {
+                try {
+                    ctx.fileHandle = await window.showSaveFilePicker({
+                        suggestedName,
+                        types: [{
+                            description: 'Binary',
+                            accept: { 'application/octet-stream': ['.bin', '.dat'] }
+                        }]
+                    });
+                } catch (err) {
+                    ctx.fileHandle = null;
+                }
+            }
+
+            logToConsole(`Storage: reading ${storageName} (storage_id=${sid}) size=${size} -> ${suggestedName}`, 'info');
+            try {
+                await rawReadRangeToFile(ctx);
+                setProgress(1);
+            } catch (err) {
+                logToConsole(`Storage: read failed (${err?.message || err})`, 'info');
+            } finally {
+                if (ui && ui.buttonEl) {
+                    ui.buttonEl.disabled = false;
+                }
+            }
+        }
+
+        function onRawRead(ctx, payload) {
+            const expected = ctx?.size ?? null;
+            if (typeof expected === 'number' && expected > 0 && payload.length !== expected) {
+                logToConsole(`RawRead: size mismatch (got ${payload.length}, expected ${expected})`, 'info');
+            }
+
+            const sid = ctx?.storageId ?? CC3200_STORAGE.SRAM;
+            const off = ctx?.offset ?? 0;
+            const fname = ctx?.filename || `raw_read_sid${sid}_off0x${(off >>> 0).toString(16)}_len${payload.length}.bin`;
+            logToConsole(`RawRead(storage_id=${sid}, offset=0x${(off >>> 0).toString(16)}, size=${expected}): received ${payload.length} bytes`, 'info');
+
+            if (ctx?.fileHandle) {
+                (async () => {
+                    try {
+                        const writable = await ctx.fileHandle.createWritable();
+                        await writable.write(payload);
+                        await writable.close();
+                        logToConsole(`RawRead: saved to '${fname}'`, 'info');
+                    } catch (err) {
+                        logToConsole(`RawRead: save failed (${err?.message || err}), falling back to download`, 'info');
+                        downloadU8AsFile(payload, fname);
+                    }
+                })();
+                return;
+            }
+
+            logToConsole(`RawRead: downloading '${fname}'`, 'info');
+            downloadU8AsFile(payload, fname);
+        }
+
+        async function runCCCommandById(cmdId) {
+            const cmd = CC_COMMANDS.find(c => c.id === cmdId);
+            if (!cmd) return;
+
+            if (!cc3200Serial || !espSerial || !espSerial.port) {
+                logToConsole('Not connected', 'info');
+                return;
+            }
+
+            const ctx = { cmdId };
+            if (cmdId === 'GetStorageInfo') {
+                ctx.storageId = getTabStorageId();
+            }
+            if (cmdId === 'RawRead') {
+                const sidEl = document.getElementById('ccRawReadStorageSelect');
+                const offsetEl = document.getElementById('ccRawReadOffset');
+                const sizeEl = document.getElementById('ccRawReadSize');
+                const fileEl = document.getElementById('ccRawReadFilename');
+
+                const storageId = sidEl ? parseInt(sidEl.value, 10) : CC3200_STORAGE.SRAM;
+                const offset = offsetEl ? parseIntAuto(offsetEl.value) : 0;
+                const size = sizeEl ? parseIntAuto(sizeEl.value) : 0;
+                const filename = fileEl ? fileEl.value : '';
+
+                if (!Number.isFinite(offset) || offset < 0) {
+                    logToConsole('RawRead: invalid offset', 'info');
+                    return;
+                }
+                if (!Number.isFinite(size) || size <= 0) {
+                    logToConsole('RawRead: size must be > 0', 'info');
+                    return;
+                }
+
+                ctx.storageId = Number.isFinite(storageId) ? storageId : CC3200_STORAGE.SRAM;
+                ctx.offset = offset >>> 0;
+                ctx.size = size >>> 0;
+                ctx.filename = filename;
+                ctx.fileHandle = null;
+
+                /* Prefer File System Access API to avoid async-download gesture restrictions */
+                if (window.showSaveFilePicker) {
+                    try {
+                        const suggestedName = (filename && filename.trim()) ? filename.trim() : `raw_read_sid${ctx.storageId}_off0x${ctx.offset.toString(16)}_len${ctx.size}.bin`;
+                        ctx.fileHandle = await window.showSaveFilePicker({
+                            suggestedName,
+                            types: [{
+                                description: 'Binary',
+                                accept: { 'application/octet-stream': ['.bin', '.dat'] }
+                            }]
+                        });
+                        ctx.filename = suggestedName;
+                    } catch (err) {
+                        /* user cancelled or not allowed; fallback to Blob download later */
+                        ctx.fileHandle = null;
+                    }
+                }
+
+                logToConsole(`CC3200 run: RawRead storage=${ctx.storageId} offset=0x${ctx.offset.toString(16)} size=${ctx.size}`, 'info');
+                try {
+                    await rawReadRangeToFile(ctx);
+                } catch (err) {
+                    logToConsole(`RawRead failed: ${err.message}`, 'info');
+                }
+                return;
+            }
+
+            const payload = cmd.build(ctx);
+            const resp = { ...cmd.response, ctx };
+            resp.callback = cmd.parse;
+
+            if (cmdId === 'RawRead') {
+                /* Very conservative: ~50 kB/s model + base latency */
+                const estimatedMs = 1500 + Math.ceil((ctx.size ?? 0) / 50);
+                resp.timeoutMs = Math.max(resp.timeoutMs ?? 0, estimatedMs);
+            }
+
+            logToConsole(`CC3200 run: ${cmdId}`, 'info');
+            await cc3200Serial.sendCommandWithResponse(payload, resp);
+        }
+
+        function padTo64Bytes(packet) {
+            if (packet.length >= 64) {
+                return packet;
+            }
+            const padded = new Uint8Array(64);
+            padded.set(packet, 0);
+            return padded;
+        }
+
+        function hexdump(buffer) {
+            let output = '';
+            for (let i = 0; i < buffer.length; i += 16) {
+                const chunk = buffer.slice(i, Math.min(i + 16, buffer.length));
+                let hex = '';
+                let ascii = '';
+
+                for (let j = 0; j < 16; j++) {
+                    if (j < chunk.length) {
+                        const byte = chunk[j];
+                        hex += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+                        ascii += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                    } else {
+                        hex += '   ';
+                        ascii += ' ';
+                    }
+                    if (j === 7) hex += ' ';
+                }
+
+                output += `${(hexDumpOffset + i).toString(16).padStart(8, '0')}:  ${hex} | ${ascii}\n`;
+            }
+            hexDumpOffset += buffer.length;
+            return output;
+        }
+
+        function logToConsole(text, type = 'normal') {
+            const consoleDisplay = document.getElementById('consoleDisplay');
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'tx' ? '[TX]' : type === 'rx' ? '[RX]' : type === 'log' ? '[LOG]' : '[INFO]';
+            consoleDisplay.textContent += `${timestamp} ${prefix} ${text}\n`;
+            consoleDisplay.scrollTop = consoleDisplay.scrollHeight;
+        }
+
+        function flushDisplayBuffer() {
+            if (displayBuffer.length > 0) {
+                logToConsole(hexdump(displayBuffer), 'rx');
+                displayBuffer = new Uint8Array(0);
+            }
+            displayTimer = null;
+        }
+
+        function scheduleDisplay() {
+            if (displayTimer) {
+                clearTimeout(displayTimer);
+            }
+            displayTimer = setTimeout(flushDisplayBuffer, 100);
+        }
+
+        function clearConsole() {
+            document.getElementById('consoleDisplay').textContent = '';
+            logToConsole('Console cleared', 'info');
+        }
+
+        /* Load a flash image from a file instead of hardware */
+        async function loadFlashImageFromFile() {
+            try {
+                const [fileHandle] = await window.showOpenFilePicker({
+                    types: [{
+                        description: 'Flash Image',
+                        accept: { 'application/octet-stream': ['.bin', '.img', '.flash'] }
+                    }],
+                    multiple: false
+                });
+
+                const file = await fileHandle.getFile();
+                const arrayBuffer = await file.arrayBuffer();
+                const flashData = new Uint8Array(arrayBuffer);
+
+                logToConsole(`Loading flash image: ${file.name} (${flashData.length} bytes)`, 'info');
+
+                /* Create SparseImage from the loaded file */
+                cc3200FlashImage = SparseImage.fromBuffer(flashData);
+                
+                document.getElementById('statusIndicator').textContent = `Flash Image: ${file.name}`;
+                document.getElementById('statusIndicator').classList.add('connected');
+                
+                logToConsole('Flash image loaded successfully - you can now browse SFFS files', 'info');
+                
+                /* Auto-refresh SFFS list if available */
+                if (typeof sffsRefreshAndRender === 'function') {
+                    await sffsRefreshAndRender();
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    logToConsole(`Failed to load flash image: ${err.message}`, 'info');
+                }
+            }
+        }
+
+        async function connectDevice() {
+            try {
+                espSerial = new EspSerial();
+                cc3200Serial = new CC3200Serial(espSerial);
+                sffsClient = null;
+
+                /* ESP behaves like a UART: log packets go to UI, raw bytes go to CC3200 + hexdump */
+                espSerial.setLogCallback((packet) => {
+                    logToConsole(packet.text, 'log');
+                });
+                espSerial.setDataCallback((data) => {
+                    cc3200Serial.processCC3200Response(data);
+                    // displayBuffer = espSerial.appendBuffer(displayBuffer, data);
+                    // scheduleDisplay();
+                });
+
+                /* Optional CC3200 events (don’t duplicate raw bytes in UI) */
+                cc3200Serial.setReceiveCallback((packet) => {
+                });
+
+                /* Connect to device */
+                if (!await espSerial.connect()) {
+                    return;
+                }
+
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('statusIndicator').textContent = 'Connected';
+                document.getElementById('statusIndicator').classList.add('connected');
+
+                logToConsole('Connected to device', 'info');
+                /* Start reading from port */
+                espSerial.readFromPort();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                await espSerial.setControlGpio(true);
+                await espSerial.setResetGpio(false);
+                await new Promise(resolve => setTimeout(resolve, 200));
+
+                /* Start CC3200 sync sequence */
+                await cc3200Serial.performSync();
+            } catch (err) {
+                if (err.name !== 'NotFoundError') {
+                    logToConsole(`Connection error: ${err.message}`, 'info');
+                }
+            }
+        }
+
+        async function disconnectDevice() {
+            try {
+                if (espSerial) {
+                    await espSerial.disconnect();
+                }
+                if (cc3200Serial) {
+                    await cc3200Serial.disconnect();
+                }
+
+                /* Flush any pending display buffer */
+                if (displayTimer) {
+                    clearTimeout(displayTimer);
+                    displayTimer = null;
+                }
+                flushDisplayBuffer();
+
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('statusIndicator').textContent = 'Disconnected';
+                document.getElementById('statusIndicator').classList.remove('connected');
+                document.getElementById('resetCheckbox').checked = false;
+                document.getElementById('controlCheckbox').checked = false;
+
+                logToConsole('Disconnected from device', 'info');
+            } catch (err) {
+                logToConsole(`Disconnect error: ${err.message}`, 'info');
+            }
+        }
+
+        /* Hexdump formatter for console logging */
+        function consoleLogHex(prefix, data) {
+            let hexStr = '';
+            for (let i = 0; i < data.length; i++) {
+                hexStr += data[i].toString(16).padStart(2, '0').toUpperCase() + ' ';
+            }
+            console.log(prefix, hexStr);
+        }
+
+        async function sendCommand() {
+            const input = document.getElementById('commandInput');
+            const command = input.value;
+
+            if (!command) return;
+            if (!espSerial || !espSerial.port) {
+                logToConsole('Not connected', 'info');
+                return;
+            }
+
+            try {
+                const writer = espSerial.port.writable.getWriter();
+                const encoder = new TextEncoder();
+                const data = encoder.encode(command + '\n');
+                await writer.write(data);
+                writer.releaseLock();
+                consoleLogHex('TX Text:', data);
+
+                /* Display sent data as hexdump */
+                const hexLines = hexdump(data);
+                logToConsole(hexLines, 'tx');
+                input.value = '';
+            } catch (err) {
+                logToConsole(`Send error: ${err.message}`, 'info');
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendCommand();
+            }
+        }
+
+        function handleHexKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendHex();
+            }
+        }
+
+        async function sendBreak() {
+            if (!espSerial || !espSerial.port) {
+                logToConsole('Not connected', 'info');
+                return;
+            }
+            await espSerial.sendBreak();
+        }
+
+        async function sendData() {
+            const input = document.getElementById('hexInput');
+            const hexString = input.value.trim();
+
+            if (!hexString) return;
+            if (!espSerial || !espSerial.port) {
+                logToConsole('Not connected', 'info');
+                return;
+            }
+
+            try {
+                /* Parse hex string */
+                const bytes = hexString.split(/\s+/)
+                    .filter(h => h.length > 0)
+                    .map((h, idx) => {
+                        const val = parseInt(h, 16);
+                        if (isNaN(val) || val < 0 || val > 255) {
+                            throw new Error(`Invalid hex byte at position ${idx}: ${h}`);
+                        }
+                        return val;
+                    });
+
+                let data = new Uint8Array(bytes);
+
+                /* Send based on mode */
+                if (sendMode === 'cc3200') {
+                    await cc3200Serial.sendCommand(data);
+                } else {
+                    const writer = espSerial.port.writable.getWriter();
+                    await writer.write(data);
+                    writer.releaseLock();
+                    consoleLogHex('TX Hex:', data);
+
+                    const hexLines = hexdump(data);
+                    logToConsole(hexLines, 'tx');
+                }
+
+                input.value = '';
+            } catch (err) {
+                logToConsole(`Send error: ${err.message}`, 'info');
+            }
+        }
+
+        async function sendHex() {
+            await sendData();
+        }
+
+        async function setResetGpio(state) {
+            if (!espSerial || !espSerial.port) {
+                document.getElementById('resetCheckbox').checked = false;
+                return;
+            }
+
+            try {
+                await espSerial.setResetGpio(state);
+            } catch (err) {
+                logToConsole(`Command error: ${err.message}`, 'info');
+                document.getElementById('resetCheckbox').checked = !state;
+            }
+        }
+
+        async function setControlGpio(state) {
+            if (!espSerial || !espSerial.port) {
+                document.getElementById('controlCheckbox').checked = false;
+                return;
+            }
+
+            try {
+                await espSerial.setControlGpio(state);
+            } catch (err) {
+                logToConsole(`Command error: ${err.message}`, 'info');
+                document.getElementById('controlCheckbox').checked = !state;
+            }
+        }
+
+        window.onload = () => {
+            initCCTabs();
+            logToConsole('Console ready', 'info');
+            logToConsole('Connect to start reading UART data', 'info');
+        };
+    </script>
+</body>
+
+</html>
