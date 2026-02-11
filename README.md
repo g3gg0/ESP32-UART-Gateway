@@ -31,9 +31,31 @@ This project turns an ESP32-C3 into a combined USB-CDC ↔ UART gateway and web-
 - UART lines from the C3 to the target ESP32's RX/TX (crossed), and common GND.
 - For convenience, all other GPIO are set to GND and can be used as UART GND.
 
-## Protocol (config)
-- 38-byte packed struct: 16-byte magic, 4-byte baud (LE, 0 for query), 1-byte TX, 1-byte RX, 16-byte inverted magic.
-- Baud 0 = query only (no reconfigure; replies with current config).
+## Protocol (basic)
+**Extended mode activation**
+- Send 12-byte magic packet (header+payload):
+   - Header: length=0x000C, type=0x000A (both little-endian)
+   - Payload: ASCII "UARTGWEX" (8 bytes)
+
+**Packet format (extended mode)**
+- 4-byte header: `uint16_t length` + `uint16_t type`, little-endian.
+- `length` includes header + payload (minimum 4).
+- Types: 0x00=DATA, 0x01=CONFIG, 0x02=CONTROL, 0x03=LOG.
+
+**Send/receive serial data**
+- Host → device: wrap raw UART bytes in a DATA packet (type 0x00).
+- Device → host: UART bytes are emitted as DATA packets (type 0x00).
+
+**CONTROL: BREAK + GPIO**
+- CONTROL payload is a 16-byte ASCII command (null/zero padded).
+- Commands:
+   - `B:<ms>`  — drive TX low for `<ms>` to generate BREAK.
+   - `R:0`/`R:1` — deassert/assert RESET GPIO (if configured).
+   - `C:0`/`C:1` — deassert/assert CONTROL GPIO (if configured).
+
+**CONFIG (12-byte payload)**
+- `baud_rate` (u32 LE), `tx_gpio`, `rx_gpio`, `reset_gpio`, `control_gpio`, `led_gpio`, padding(2), `extended_mode`.
+- `baud_rate=0` is query-only; device replies with current config.
 
 ## Notes
 - Web Serial works in Chromium-based browsers (Chrome, Edge) when served from a file:// origin for this simple use case.

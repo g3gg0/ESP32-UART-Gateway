@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include "driver/uart.h"
 
-
 /* UART Gateway default configuration */
 #define UART_DEFAULT_BAUD 115200
 
@@ -17,60 +16,52 @@
 /* Stream buffer sizes - 32 KiB each direction */
 #define STREAM_BUFFER_SIZE (32 * 1024)
 
-
-/* Configuration magic: 16-byte pattern for identifying config packets */
-#define UART_CONFIG_MAGIC_SIZE 8
-extern const uint8_t uart_config_magic[UART_CONFIG_MAGIC_SIZE];
+/* Extended mode activation magic: a valid packet with type 0x000A and 8-byte payload */
+#define UART_EXTMODE_MAGIC_PAYLOAD "UARTGWEX"
+#define UART_EXTMODE_MAGIC_SIZE 12 /* 4 bytes header + 8 bytes payload */
 
 /* Configuration packet structure - packed for binary compatibility */
+/* No magic fields - uses packet header in extended mode */
 typedef struct __attribute__((packed))
 {
-    uint8_t magic[UART_CONFIG_MAGIC_SIZE];
     uint32_t baud_rate;
     uint8_t tx_gpio;
     uint8_t rx_gpio;
     uint8_t reset_gpio;
     uint8_t control_gpio;
     uint8_t led_gpio;
-    uint8_t padding[3];
-    uint8_t inv_magic[UART_CONFIG_MAGIC_SIZE];
+    uint8_t padding[2];
+    uint8_t extended_mode;
 } uart_config_packet_t;
 
 #define UART_CONFIG_PACKET_SIZE sizeof(uart_config_packet_t)
 
-/* Control packet magic: 16-byte pattern for identifying control packets */
-#define UART_CONTROL_MAGIC_SIZE 8
-extern const uint8_t uart_control_magic[UART_CONTROL_MAGIC_SIZE];
+/* Extended mode packet types */
+typedef enum
+{
+    UART_PACKET_TYPE_DATA = 0x00,    /* Normal serial data */
+    UART_PACKET_TYPE_CONFIG = 0x01,  /* USB config struct */
+    UART_PACKET_TYPE_CONTROL = 0x02, /* Control commands (B:1234, R:0) */
+    UART_PACKET_TYPE_LOG = 0x03,     /* Log messages from ESP32 */
+    UART_PACKET_TYPE_EXTMODE = 0x0A  /* Extended mode activation packet */
+} uart_packet_type_t;
+
+/* Extended mode packet header */
+typedef struct __attribute__((packed))
+{
+    uint16_t length; /* Total length including length and type field (minimum 4) */
+    uint16_t type;   /* Packet type (see uart_packet_type_t) */
+} uart_packet_header_t;
+
+#define PTR_BEHIND(ptr) ((void *)(((intptr_t)(ptr)) + sizeof(uart_packet_header_t)))
+
+#define UART_PACKET_HEADER_SIZE sizeof(uart_packet_header_t)
 
 /* Maximum control command string length */
 #define UART_CONTROL_CMD_SIZE 16
 
-/* Control packet structure - packed for binary compatibility */
-typedef struct __attribute__((packed))
-{
-    uint8_t magic[UART_CONTROL_MAGIC_SIZE];
-    char command[UART_CONTROL_CMD_SIZE];
-    uint8_t inv_magic[UART_CONTROL_MAGIC_SIZE];
-} uart_control_packet_t;
-
-#define UART_CONTROL_PACKET_SIZE sizeof(uart_control_packet_t)
-
-/* Log message packet magic: 16-byte pattern for identifying log packets */
-#define UART_LOGMSG_MAGIC_SIZE 8
-extern const uint8_t uart_logmsg_magic[UART_LOGMSG_MAGIC_SIZE];
-
 /* Maximum log message length in bytes */
 #define UART_LOGMSG_MAX_LEN 256
-
-/* Log message packet header (payload follows) */
-typedef struct __attribute__((packed))
-{
-    uint8_t magic[UART_LOGMSG_MAGIC_SIZE];
-    uint32_t length;
-    uint8_t inv_magic[UART_LOGMSG_MAGIC_SIZE];
-} uart_logmsg_header_t;
-
-#define UART_LOGMSG_HEADER_SIZE sizeof(uart_logmsg_header_t)
 
 typedef struct
 {
@@ -80,6 +71,7 @@ typedef struct
     uint8_t reset_gpio;
     uint8_t control_gpio;
     uint8_t led_gpio;
+    uint8_t extended_mode;
 } uartgw_config_t;
 
 /* Callback function type for configuration change notifications */
@@ -119,7 +111,7 @@ esp_err_t uart_gateway_save_config(void);
 esp_err_t uart_gateway_load_config(uartgw_config_t *loaded_config);
 
 /* Build a configuration response packet */
-void uart_gateway_build_response_packet(uint8_t *packet, size_t *packet_len);
+void uart_gateway_build_response_packet(uart_config_packet_t *packet);
 
 /* Queue data from CDC to UART */
 esp_err_t uart_gateway_queue_cdc_data(const uint8_t *data, size_t length);
@@ -128,10 +120,10 @@ esp_err_t uart_gateway_queue_cdc_data(const uint8_t *data, size_t length);
 int uart_gateway_receive_cdc_queue(uint8_t *buffer, size_t max_length);
 
 /* Queue data from UART to CDC */
-esp_err_t uart_gateway_queue_uart_data(const uint8_t *data, size_t length);
+esp_err_t queue_packet(uart_packet_header_t *packet);
 
 /* Receive data from UART queue (intended for CDC) */
-int uart_gateway_receive_uart_queue(uint8_t *buffer, size_t max_length);
+uart_packet_header_t *unqueue_packet(void);
 
 /* Send formatted log message to CDC as LOGMSG packet */
 void send_message(const char *fmt, ...);

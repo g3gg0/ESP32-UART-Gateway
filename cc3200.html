@@ -248,7 +248,8 @@
                 <button class="btn-primary" id="connectBtn" onclick="connectDevice()">Connect</button>
                 <button class="btn-secondary" id="disconnectBtn" onclick="disconnectDevice()"
                     disabled>Disconnect</button>
-                <button class="btn-secondary" id="loadFlashBtn" onclick="loadFlashImageFromFile()">Load Flash Image</button>
+                <button class="btn-secondary" id="loadFlashBtn" onclick="loadFlashImageFromFile()">Load Flash
+                    Image</button>
                 <button class="btn-secondary" id="clearBtn" onclick="clearConsole()">Clear</button>
                 <div class="connection-status" id="statusIndicator">Disconnected</div>
             </div>
@@ -281,57 +282,34 @@
                 this.inputDone = false;
                 this.receive_cbr = null; /* Backward-compat alias for data callback */
                 this.data_cbr = null; /* Raw UART-like bytes */
+                this.config_cbr = null; /* Config packets */
                 this.log_cbr = null; /* Parsed ESP log packets */
 
-                this.rxFlushTimer = null;
-                this.rxFlushTimeoutMs = 10;
-
-                /* LOG packet constants */
-                this.LOG_MAGIC = new Uint8Array([
-                    0x4C, 0x4F, 0x47, 0x4D, 0x53, 0x47, 0x01, 0x00
+                /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
+                this.EXTMODE_MAGIC = new Uint8Array([
+                    0x0C, 0x00,  /* length: 12 (4 bytes header + 8 bytes payload) */
+                    0x0A, 0x00,  /* type: 0x000A */
+                    0x55, 0x41, 0x52, 0x54,  /* U A R T */
+                    0x47, 0x57, 0x45, 0x58   /* G W E X */
                 ]);
-                this.LOG_HEADER_SIZE = this.LOG_MAGIC.length + 4 + this.LOG_MAGIC.length;
-                this.LOG_INV_OFFSET = this.LOG_MAGIC.length + 4;
+                this.EXTMODE_PACKET_SIZE = 12;
+
+                /* Packet header constants */
+                this.PACKET_HEADER_SIZE = 4;  /* uint16_t length + uint16_t type */
+                this.PACKET_TYPE_DATA = 0x00;
+                this.PACKET_TYPE_CONFIG = 0x01;
+                this.PACKET_TYPE_CONTROL = 0x02;
+                this.PACKET_TYPE_LOG = 0x03;
+
+                this.CTRL_CMD_SIZE = 16;
                 this.LOGMSG_MAX_LEN = 256;
 
-                /* CONTROL packet constants */
-                this.CTRL_MAGIC = new Uint8Array([
-                    0x43, 0x54, 0x52, 0x4C, 0x47, 0x57, 0x01, 0x00
-                ]);
-                this.CTRL_PACKET_SIZE = this.CTRL_MAGIC.length + 16 + this.CTRL_MAGIC.length;
-                this.CTRL_INV_OFFSET = this.CTRL_MAGIC.length + 16;
-                this.CTRL_PADDED_SIZE = 64;
-            }
+                this.extendedMode = false;
 
-            _clearRxFlushTimer() {
-                if (this.rxFlushTimer) {
-                    clearTimeout(this.rxFlushTimer);
-                    this.rxFlushTimer = null;
-                }
-            }
-
-            _flushRxBufferAsData() {
-                if (!this.rxBuffer || this.rxBuffer.length === 0) {
-                    return;
-                }
-
-                try {
-                    const chunk = this.rxBuffer;
-                    this.rxBuffer = new Uint8Array(0);
-                    if (this.data_cbr) {
-                        this.data_cbr(chunk);
-                    }
-                } finally {
-                    this._clearRxFlushTimer();
-                }
-            }
-
-            _armRxFlushTimer() {
-                this._clearRxFlushTimer();
-                this.rxFlushTimer = setTimeout(() => {
-                    this.rxFlushTimer = null;
-                    this._flushRxBufferAsData();
-                }, this.rxFlushTimeoutMs);
+                /* Log message waiting mechanism */
+                this.nextLogPromise = null;
+                this.nextLogResolve = null;
+                this.nextLogTimer = null;
             }
 
             setReceiveCallback(callback) {
@@ -344,15 +322,89 @@
                 this.data_cbr = callback;
             }
 
+            setConfigCallback(callback) {
+                this.config_cbr = callback;
+            }
+
             setLogCallback(callback) {
                 this.log_cbr = callback;
+            }
+
+            async flushSerialData(durationMs) {
+                if (!this.port) return;
+                try {
+                    const reader = this.port.readable.getReader();
+                    const startTime = Date.now();
+                    let bytesDiscarded = 0;
+
+                    while (Date.now() - startTime < durationMs) {
+                        try {
+                            const { value, done } = await Promise.race([
+                                reader.read(),
+                                new Promise((_, reject) =>
+                                    setTimeout(() => reject(new Error('flush timeout')), 50)
+                                )
+                            ]);
+
+                            if (done) break;
+                            if (value) {
+                                bytesDiscarded += value.length;
+                            }
+                        } catch (err) {
+                            /* Timeout waiting for data, continue flushing */
+                            if (err.message !== 'flush timeout') throw err;
+                        }
+                    }
+
+                    reader.releaseLock();
+                    logToConsole(`Serial flush complete: ${bytesDiscarded} bytes discarded`, 'info');
+                } catch (err) {
+                    logToConsole(`Serial flush error: ${err.message}`, 'info');
+                }
             }
 
             async connect() {
                 try {
                     this.port = await navigator.serial.requestPort();
                     await this.port.open({ baudRate: 921600 });
+
+                    /* Ensure RTS and DTR are low after opening */
+                    try {
+                        await this.port.setSignals({ requestToSend: false, dataTerminalReady: false });
+                    } catch (e) {
+                        logToConsole(`Warning: Failed to set RTS/DTR: ${e.message}`, 'info');
+                    }
+
+                    /* Flush any pending serial data for 250ms */
+                    await this.flushSerialData(250);
+
+                    /* Start reader task (non-blocking) */
+                    this.readFromPort();
+
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     logToConsole('ESP Serial: Connected', 'info');
+
+                    /* Send extended mode activation magic */
+                    const magic = this.buildExtModeActivationPacket();
+                    consoleLogHex('TX ExtMode Magic:', magic);
+                    await this.sendPacket(magic, 'ExtMode Magic');
+                    logToConsole('ESP Serial: Extended mode activation sent', 'info');
+                    this.extendedMode = true;
+
+                    /* Wait for first log message to confirm extended mode is working */
+                    logToConsole('ESP Serial: Waiting for log message...', 'info');
+                    const logMsg = await this.waitForLogMessage(2000);
+                    if (!logMsg) {
+                        throw new Error('No log message received after extended mode activation - device may not be responding');
+                    }
+                    logToConsole(`ESP Serial: Confirmed with log: "${logMsg.substring(0, 50)}..."`, 'info');
+
+                    /* Request current configuration - MUST succeed */
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    logToConsole('Requesting device configuration...', 'info');
+                    await this.requestConfig();
+                    logToConsole('Device configuration received', 'info');
+
                     return true;
                 } catch (err) {
                     if (err.name !== 'NotFoundError') {
@@ -362,11 +414,19 @@
                 }
             }
 
+            async waitForLogMessage(timeoutMs = 2000) {
+                return new Promise((resolve) => {
+                    this.nextLogResolve = resolve;
+                    this.nextLogTimer = setTimeout(() => {
+                        this.nextLogResolve = null;
+                        resolve(null);
+                    }, timeoutMs);
+                });
+            }
+
             async disconnect() {
                 try {
                     this.inputDone = true;
-
-                    this._clearRxFlushTimer();
 
                     /* Release reader lock if it exists */
                     if (this.reader) {
@@ -403,39 +463,35 @@
                 return out;
             }
 
-            checkMagic(buffer, offset, magic, inverted) {
-                for (let i = 0; i < magic.length; i++) {
-                    const expected = inverted ? (magic[i] ^ 0xFF) : magic[i];
-                    if (buffer[offset + i] !== expected) {
-                        return false;
-                    }
-                }
-                return true;
+            buildExtModeActivationPacket() {
+                /* Magic packet is already complete: header + payload */
+                return new Uint8Array(this.EXTMODE_MAGIC);
             }
 
-            padTo64Bytes(packet) {
-                if (packet.length >= this.CTRL_PADDED_SIZE) {
-                    return packet;
-                }
-                const padded = new Uint8Array(this.CTRL_PADDED_SIZE);
-                padded.set(packet, 0);
-                return padded;
+            buildPacketHeader(payloadLength, type) {
+                /* Calculate total length: payload + 4-byte header */
+                const length = payloadLength + 4;
+                const header = new Uint8Array(this.PACKET_HEADER_SIZE);
+                header[0] = length & 0xFF;          /* length low byte */
+                header[1] = (length >> 8) & 0xFF;   /* length high byte */
+                header[2] = type & 0xFF;            /* type low byte */
+                header[3] = (type >> 8) & 0xFF;     /* type high byte */
+                return header;
+            }
+
+            buildPacket(payload, type) {
+                /* Build complete packet: header + payload */
+                const header = this.buildPacketHeader(payload.length, type);
+                return this.appendBuffer(header, payload);
             }
 
             buildControlPacket(command) {
-                const packet = new Uint8Array(this.CTRL_PACKET_SIZE);
-                packet.set(this.CTRL_MAGIC, 0);
-
                 const cmdBytes = new TextEncoder().encode(command);
-                for (let i = 0; i < Math.min(cmdBytes.length, 16); i++) {
-                    packet[this.CTRL_MAGIC.length + i] = cmdBytes[i];
+                const payload = new Uint8Array(this.CTRL_CMD_SIZE);
+                for (let i = 0; i < Math.min(cmdBytes.length, this.CTRL_CMD_SIZE); i++) {
+                    payload[i] = cmdBytes[i];
                 }
-
-                for (let i = 0; i < this.CTRL_MAGIC.length; i++) {
-                    packet[this.CTRL_INV_OFFSET + i] = this.CTRL_MAGIC[i] ^ 0xFF;
-                }
-
-                return this.padTo64Bytes(packet);
+                return this.buildPacket(payload, this.PACKET_TYPE_CONTROL);
             }
 
             processEspPackets(data) {
@@ -448,6 +504,36 @@
                     }
                 };
 
+                const emitConfig = (configBytes) => {
+                    let parsedConfig = {
+                        type: 'config_packet',
+                        data: configBytes,
+                        baud_rate: 0,
+                        tx_gpio: 0,
+                        rx_gpio: 0,
+                        reset_gpio: 0,
+                        control_gpio: 0,
+                        led_gpio: 0,
+                        extended_mode: 0
+                    };
+
+                    /* Parse config structure if exactly 12 bytes */
+                    if (configBytes.length === 12) {
+                        const view = new DataView(configBytes.buffer, configBytes.byteOffset, configBytes.length);
+                        parsedConfig.baud_rate = view.getUint32(0, true);
+                        parsedConfig.tx_gpio = configBytes[4];
+                        parsedConfig.rx_gpio = configBytes[5];
+                        parsedConfig.reset_gpio = configBytes[6];
+                        parsedConfig.control_gpio = configBytes[7];
+                        parsedConfig.led_gpio = configBytes[8];
+                        parsedConfig.extended_mode = configBytes[11];
+                    }
+
+                    if (this.config_cbr) {
+                        this.config_cbr(parsedConfig);
+                    }
+                };
+
                 const emitLog = (msgBytes) => {
                     const text = new TextDecoder().decode(msgBytes);
                     if (this.log_cbr) {
@@ -457,102 +543,65 @@
                             text
                         });
                     }
+                    /* Resolve any pending log wait */
+                    if (this.nextLogResolve) {
+                        this.nextLogResolve(text);
+                        this.nextLogResolve = null;
+                        if (this.nextLogTimer) {
+                            clearTimeout(this.nextLogTimer);
+                            this.nextLogTimer = null;
+                        }
+                    }
                 };
 
-                const indexOfMagic = (buf, magic) => {
-                    if (!buf || buf.length < magic.length) return -1;
-                    for (let i = 0; i <= buf.length - magic.length; i++) {
-                        let match = true;
-                        for (let j = 0; j < magic.length; j++) {
-                            if (buf[i + j] !== magic[j]) {
-                                match = false;
-                                break;
-                            }
-                        }
-                        if (match) return i;
+                if (!this.extendedMode) {
+                    /* In non-extended mode, just pass through all data */
+                    if (this.rxBuffer.length > 0) {
+                        emitData(this.rxBuffer);
+                        this.rxBuffer = new Uint8Array(0);
                     }
-                    return -1;
-                };
-
-                const magicTailMatchLen = (buf, magic) => {
-                    const maxLen = Math.min(buf.length, magic.length - 1);
-                    for (let len = maxLen; len > 0; len--) {
-                        let match = true;
-                        for (let i = 0; i < len; i++) {
-                            if (buf[buf.length - len + i] !== magic[i]) {
-                                match = false;
-                                break;
-                            }
-                        }
-                        if (match) return len;
-                    }
-                    return 0;
-                };
-
-                /* UART-like stream: peel off ESP LOG packets, forward remaining bytes */
-                while (this.rxBuffer.length > 0) {
-                    const magicIdx = indexOfMagic(this.rxBuffer, this.LOG_MAGIC);
-
-                    if (magicIdx === -1) {
-                        const keepLen = magicTailMatchLen(this.rxBuffer, this.LOG_MAGIC);
-                        const emitLen = this.rxBuffer.length - keepLen;
-                        if (emitLen > 0) {
-                            emitData(this.rxBuffer.slice(0, emitLen));
-                            this.rxBuffer = this.rxBuffer.slice(emitLen);
-                        }
-
-                        /* If we keep a partial LOG_MAGIC prefix, flush it after a short idle timeout */
-                        if (this.rxBuffer.length > 0) {
-                            this._armRxFlushTimer();
-                        } else {
-                            this._clearRxFlushTimer();
-                        }
-                        return;
-                    }
-
-                    if (magicIdx > 0) {
-                        emitData(this.rxBuffer.slice(0, magicIdx));
-                        this.rxBuffer = this.rxBuffer.slice(magicIdx);
-                        continue;
-                    }
-
-                    /* magicIdx === 0: attempt to parse a full LOG packet */
-                    if (this.rxBuffer.length < this.LOG_HEADER_SIZE) {
-                        this._armRxFlushTimer();
-                        return;
-                    }
-
-                    if (!this.checkMagic(this.rxBuffer, this.LOG_INV_OFFSET, this.LOG_MAGIC, true)) {
-                        /* Not actually a LOG packet; forward one byte and resync */
-                        emitData(this.rxBuffer.slice(0, 1));
-                        this.rxBuffer = this.rxBuffer.slice(1);
-                        continue;
-                    }
-
-                    const length = (this.rxBuffer[this.LOG_MAGIC.length]) |
-                        (this.rxBuffer[this.LOG_MAGIC.length + 1] << 8) |
-                        (this.rxBuffer[this.LOG_MAGIC.length + 2] << 16) |
-                        (this.rxBuffer[this.LOG_MAGIC.length + 3] << 24);
-
-                    if (length < 0 || length > this.LOGMSG_MAX_LEN) {
-                        logToConsole(`Invalid LOGMSG length: ${length}`, 'info');
-                        emitData(this.rxBuffer.slice(0, 1));
-                        this.rxBuffer = this.rxBuffer.slice(1);
-                        continue;
-                    }
-
-                    if (this.rxBuffer.length < this.LOG_HEADER_SIZE + length) {
-                        this._armRxFlushTimer();
-                        return;
-                    }
-
-                    const msgBytes = this.rxBuffer.slice(this.LOG_HEADER_SIZE, this.LOG_HEADER_SIZE + length);
-                    emitLog(msgBytes);
-                    this.rxBuffer = this.rxBuffer.slice(this.LOG_HEADER_SIZE + length);
+                    return;
                 }
 
-                /* Nothing buffered, cancel idle flush */
-                this._clearRxFlushTimer();
+                /* Extended mode: parse packet headers */
+                while (this.rxBuffer.length >= this.PACKET_HEADER_SIZE) {
+                    const length = (this.rxBuffer[0] | (this.rxBuffer[1] << 8)) >>> 0;
+                    const type = (this.rxBuffer[2] | (this.rxBuffer[3] << 8)) >>> 0;
+
+                    /* Validate length (must include header, minimum 4) */
+                    if (length < 4) {
+                        /* Invalid packet, discard first byte and resync */
+                        this.rxBuffer = this.rxBuffer.slice(1);
+                        continue;
+                    }
+
+                    const payloadLen = length - 4;
+                    const totalLen = this.PACKET_HEADER_SIZE + payloadLen;
+
+                    /* Wait for complete packet */
+                    if (this.rxBuffer.length < totalLen) {
+                        break;
+                    }
+
+                    /* Extract payload */
+                    const payload = this.rxBuffer.slice(this.PACKET_HEADER_SIZE, totalLen);
+                    this.rxBuffer = this.rxBuffer.slice(totalLen);
+
+                    /* Handle packet based on type */
+                    if (type === this.PACKET_TYPE_DATA) {
+                        /* Type 0x00: Normal serial data */
+                        emitData(payload);
+                    } else if (type === this.PACKET_TYPE_CONFIG) {
+                        /* Type 0x01: Config response */
+                        emitConfig(payload);
+                    } else if (type === this.PACKET_TYPE_LOG) {
+                        /* Type 0x03: Log message */
+                        emitLog(payload);
+                    } else {
+                        /* Unknown packet type, pass through as data */
+                        emitData(payload);
+                    }
+                }
             }
 
             async readFromPort() {
@@ -568,8 +617,8 @@
                             if (done) break;
 
                             if (value) {
-                                /* Always log raw RX bytes and feed ESP packet splitter */
-                                // consoleLogHex('RX:', value);
+                                /* Log raw RX bytes at lowest level */
+                                consoleLogHex('RX:', value);
                                 this.processEspPackets(value);
                             }
                         } catch (err) {
@@ -589,53 +638,145 @@
                 }
             }
 
-            async sendBreak() {
+            async sendData(data) {
                 if (!this.port) return;
                 try {
-                    let breakLen = parseInt(document.getElementById('breakLenInput').value) || 200;
-                    if (breakLen > 200) breakLen = 200;
-                    if (breakLen < 0) breakLen = 0;
-                    const commandStr = 'B:' + breakLen;
-
-                    const packet = this.buildControlPacket(commandStr);
                     const writer = this.port.writable.getWriter();
-                    await writer.write(packet);
-                    writer.releaseLock();
-                    consoleLogHex('TX Break:', packet);
-
-                    //logToConsole(`Break condition sent (${breakLen} bits)`, 'info');
+                    try {
+                        await this.sendDataWithWriter(writer, data);
+                    } finally {
+                        writer.releaseLock();
+                    }
                 } catch (err) {
-                    logToConsole(`Break send error: ${err.message}`, 'info');
+                    logToConsole(`Send data error: ${err.message}`, 'info');
                 }
+            }
+
+            async sendDataWithWriter(writer, data) {
+                /* Fragment data into 64k blocks if needed */
+                const maxPayloadSize = 65534;
+                let offset = 0;
+
+                while (offset < data.length) {
+                    const chunkSize = Math.min(maxPayloadSize, data.length - offset);
+                    const chunk = data.slice(offset, offset + chunkSize);
+
+                    const packet = this.buildPacket(chunk, this.PACKET_TYPE_DATA);
+
+                    /* Log raw TX bytes at lowest level */
+                    consoleLogHex('TX Data:', packet);
+                    await writer.write(packet);
+                    offset += chunkSize;
+                }
+            }
+
+            async sendPacket(packet, label) {
+                if (!this.port) return;
+                try {
+                    const writer = this.port.writable.getWriter();
+                    try {
+                        consoleLogHex(`TX ${label}:`, packet);
+                        await writer.write(packet);
+                    } finally {
+                        writer.releaseLock();
+                    }
+                } catch (err) {
+                    logToConsole(`Send packet error: ${err.message}`, 'info');
+                }
+            }
+
+            async sendBreak() {
+                let breakLen = parseInt(document.getElementById('breakLenInput').value) || 200;
+                if (breakLen > 200) breakLen = 200;
+                if (breakLen < 0) breakLen = 0;
+                const commandStr = 'B:' + breakLen;
+                const packet = this.buildControlPacket(commandStr);
+                await this.sendPacket(packet, 'Break');
             }
 
             async setResetGpio(value) {
-                if (!this.port) return;
-                try {
-                    const command = value ? 'R:1' : 'R:0';
-                    const packet = this.buildControlPacket(command);
-                    const writer = this.port.writable.getWriter();
-                    await writer.write(packet);
-                    writer.releaseLock();
-                    consoleLogHex('TX Reset:', packet);
-                    // logToConsole(`Reset GPIO: ${value ? 'HIGH' : 'LOW'}`, 'tx');
-                } catch (err) {
-                    logToConsole(`GPIO write error: ${err.message}`, 'info');
-                }
+                const command = value ? 'R:1' : 'R:0';
+                const packet = this.buildControlPacket(command);
+                await this.sendPacket(packet, 'Reset');
             }
 
             async setControlGpio(value) {
+                const command = value ? 'C:1' : 'C:0';
+                const packet = this.buildControlPacket(command);
+                await this.sendPacket(packet, 'Control');
+            }
+
+            async requestConfig() {
+                if (!this.port) throw new Error('Port not connected');
+                try {
+                    const payload = new Uint8Array(12);
+                    payload.fill(0);
+
+                    const packet = this.buildPacket(payload, this.PACKET_TYPE_CONFIG);
+
+                    /* Track if we received a config response */
+                    let configReceived = false;
+                    const originalConfigCbr = this.config_cbr;
+                    this.config_cbr = (packet) => {
+                        configReceived = true;
+                        if (originalConfigCbr) originalConfigCbr(packet);
+                    };
+
+                    await this.sendPacket(packet, 'Config Request');
+
+                    /* Wait up to 2 seconds for config response - MUST receive it */
+                    let waited = 0;
+                    while (waited < 2000 && !configReceived) {
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        waited += 50;
+                    }
+
+                    this.config_cbr = originalConfigCbr;
+
+                    if (!configReceived) {
+                        throw new Error('Config request timeout - device did not respond');
+                    }
+                } catch (err) {
+                    logToConsole(`Config request error: ${err.message}`, 'info');
+                    throw err;
+                }
+            }
+
+            async setConfig(configData) {
                 if (!this.port) return;
                 try {
-                    const command = value ? 'C:1' : 'C:0';
-                    const packet = this.buildControlPacket(command);
+                    /* Build 12-byte payload from config structure */
+                    const payload = new Uint8Array(12);
+                    payload.fill(0);
+
+                    /* baud_rate at offset 0-3 (little-endian) */
+                    const baud = configData.baud_rate || 0;
+                    payload[0] = baud & 0xFF;
+                    payload[1] = (baud >> 8) & 0xFF;
+                    payload[2] = (baud >> 16) & 0xFF;
+                    payload[3] = (baud >> 24) & 0xFF;
+
+                    /* GPIO pins at offsets 4-8 */
+                    payload[4] = configData.tx_gpio || 0;
+                    payload[5] = configData.rx_gpio || 0;
+                    payload[6] = configData.reset_gpio || 0;
+                    payload[7] = configData.control_gpio || 0;
+                    payload[8] = configData.led_gpio || 0;
+
+                    /* Padding at offsets 9-10 */
+                    payload[9] = 0;
+                    payload[10] = 0;
+
+                    /* extended_mode at offset 11 */
+                    payload[11] = configData.extended_mode || 0;
+
+                    const packet = this.buildPacket(payload, this.PACKET_TYPE_CONFIG);
+
                     const writer = this.port.writable.getWriter();
                     await writer.write(packet);
                     writer.releaseLock();
-                    consoleLogHex('TX Control:', packet);
-                    // logToConsole(`Control GPIO: ${value ? 'HIGH' : 'LOW'}`, 'tx');
                 } catch (err) {
-                    logToConsole(`GPIO write error: ${err.message}`, 'info');
+                    logToConsole(`Config send error: ${err.message}`, 'info');
                 }
             }
         }
@@ -807,12 +948,11 @@
             }
 
             async _sendAckNow() {
-                if (!this.espSerial.port) return;
+                if (!this.espSerial) return;
                 const ack = new Uint8Array([0x00, 0xCC]);
-                const writer = this.espSerial.port.writable.getWriter();
-                await writer.write(ack);
-                writer.releaseLock();
-                consoleLogHex('TX CC3200Ack:', ack);
+                /* Send CC3200 ACK wrapped in ESP DATA packet */
+                await this.espSerial.sendData(ack);
+                /* consoleLogHex('TX CC3200Ack:', ack); */
             }
 
             _scheduleAck() {
@@ -837,7 +977,7 @@
 
                 if (data.length > 0) {
                     this.rxBuffer = this.appendBuffer(this.rxBuffer, data);
-                    consoleLogHex(`RX CC3200(${this.cc3200State}, ${this.rxBuffer.length} buffered, ${this.pendingResponse ? this.pendingResponse.kind : 'none'}):`, data);
+                    //consoleLogHex(`RX CC3200(${this.cc3200State}, ${this.rxBuffer.length} buffered, ${this.pendingResponse ? this.pendingResponse.kind : 'none'}):`, data);
                 }
 
                 if (this.cc3200State === 'idle') {
@@ -960,7 +1100,7 @@
             }
 
             async sendCommand(data, expectResponse = false) {
-                if (!this.espSerial.port) return;
+                if (!this.espSerial) return;
                 try {
                     const len = data.length + 2;
                     const checksum = (data.reduce((sum, byte) => sum + byte, 0)) & 0xFF;
@@ -973,10 +1113,10 @@
                     this.waitingForResponse = true;
                     this.cc3200State = 'waitingForAck';
                     this.autoFinishAfterAck = !expectResponse;
-                    const writer = this.espSerial.port.writable.getWriter();
-                    await writer.write(packet);
-                    writer.releaseLock();
-                    consoleLogHex('TX CC3200Cmd:', packet);
+                    
+                    /* Send CC3200 frame wrapped in ESP DATA packet */
+                    await this.espSerial.sendData(packet);
+                    /* consoleLogHex('TX CC3200Cmd:', packet); */
 
                     //logToConsole(`CC3200 command sent: ${hexdump(packet)}`, 'tx');
 
@@ -1033,7 +1173,7 @@
             }
 
             async performSync() {
-                if (!this.espSerial.port) return;
+                if (!this.espSerial) return;
 
                 logToConsole('Starting CC3200 sync sequence...', 'info');
                 this.cc3200State = 'syncing';
@@ -1115,6 +1255,30 @@
         let displayTimer = null;
         let hexDumpOffset = 0;
         let sendMode = 'hex';
+
+        /* Initialize ESP Serial with callbacks */
+        function initializeEspSerial() {
+            espSerial = new EspSerial();
+
+            /* Set up data callback */
+            espSerial.setDataCallback((data) => {
+                const hexStr = Array.from(data.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                const suffix = data.length > 32 ? ' ...' : '';
+                logToConsole(`Data packet: ${hexStr}${suffix}`, 'info');
+            });
+
+            /* Set up config callback */
+            espSerial.setConfigCallback((packet) => {
+                logToConsole(`Config received: ${packet.data.length} bytes`, 'info');
+            });
+
+            /* Set up log callback */
+            espSerial.setLogCallback((packet) => {
+                logToConsole(`[LOG] ${packet.text}`, 'debug');
+            });
+
+            return espSerial;
+        }
 
         const CC3200_OPCODES = {
             GetVersion: 0x2F,
@@ -1341,7 +1505,7 @@
                     ]);
                 },
                 response: { kind: 'bytes', expectedBytes: 0, timeoutMs: 2000 },
-                parse: function(data) {
+                parse: function (data) {
                     logToConsole('Switch to APPS: command accepted, NWP should be initializing...', 'info');
                     return data;
                 },
@@ -1596,8 +1760,8 @@
 
                     /* Read filename token (32-bit hash at token array offset) */
                     const tokenOff = this.SFFS_FAT_TOKEN_ARRAY_OFFSET + i * 4;
-                    const token = (tokenOff + 4 <= fatBytes.length) 
-                        ? le32From(fatBytes, tokenOff) 
+                    const token = (tokenOff + 4 <= fatBytes.length)
+                        ? le32From(fatBytes, tokenOff)
                         : 0xFFFFFFFF;
 
                     /* Check if filename is missing (meta2 = FF FF FF FF) */
@@ -1641,14 +1805,14 @@
 
             async getStorageInfo() {
                 /* If using flash image offline (no serial connection), return default info */
-                if (cc3200FlashImage && (!cc3200Serial || !espSerial || !espSerial.port)) {
+                if (cc3200FlashImage && (!cc3200Serial || !espSerial)) {
                     return {
                         blockSize: 4096,
                         numBlocks: Math.floor(cc3200FlashImage.size / 4096),
                         storageId: this.storageId
                     };
                 }
-                
+
                 const cmd = u8Concat([
                     new Uint8Array([CC3200_OPCODES.GetStorageInfo]),
                     be32(this.storageId >>> 0)
@@ -1669,12 +1833,12 @@
 
             async readFatPair() {
                 const info = await this.getStorageInfo();
-                
+
                 /* Read FAT directly from SparseImage if available */
                 if (cc3200FlashImage) {
                     await cc3200FlashImage.prefetch(0, 2 * info.blockSize);
                     const bytes = await cc3200FlashImage.subarray_async(0, 2 * info.blockSize);
-                    
+
                     if (bytes.length < 2 * info.blockSize) {
                         throw new Error(`SFFS: FAT read short (got ${bytes.length}, expected ${2 * info.blockSize})`);
                     }
@@ -1683,7 +1847,7 @@
                     const fat1 = bytes.slice(info.blockSize, 2 * info.blockSize);
                     return { info, fat0, fat1 };
                 }
-                
+
                 /* Fall back to rawReadRangeToU8 for hardware mode */
                 const bytes = await rawReadRangeToU8({
                     storageId: this.storageId,
@@ -1722,7 +1886,7 @@
                 }
 
                 const files = SffsFATParser.parseFiles(selected.fat);
-                
+
                 /* Store the blockSize in each file entry for direct access */
                 files.forEach(f => {
                     f.blockSize = info.blockSize;
@@ -2034,7 +2198,7 @@
                     remaining -= chunkSize;
 
                     if ((done % (blockSize * 32)) === 0 || done === total) {
-                        logToConsole(`RawRead: ${done}/${total} bytes (${(done*100/total).toFixed(2)}%)`, 'info');
+                        logToConsole(`RawRead: ${done}/${total} bytes (${(done * 100 / total).toFixed(2)}%)`, 'info');
                     }
                 }
 
@@ -2207,7 +2371,7 @@
                 for (let i = 1; i <= 40; i++) {
                     setSffsStatus(`Switch to APPS: sending break signal ${i}/4...`);
                     logToConsole(`Break signal ${i}/4: asserting break on RX line...`, 'info');
-                    
+
                     /* Set break (spacing condition) */
                     if (espSerial && espSerial.port) {
                         await espSerial.sendBreak();
@@ -2238,7 +2402,7 @@
                     /* Deassert break before next iteration */
                     logToConsole(`Break signal ${i}/4: deasserting break...`, 'info');
                     /* Break is naturally deasserting after the condition ends */
-                    
+
                     if (i < 4) {
                         await new Promise(resolve => setTimeout(resolve, 100));
                     }
@@ -2272,9 +2436,9 @@
                 }
                 return sffsClient;
             }
-            
+
             /* Normal mode: require serial connection */
-            if (!cc3200Serial || !espSerial || !espSerial.port) {
+            if (!cc3200Serial || !espSerial) {
                 throw new Error('Not connected');
             }
             if (!sffsClient) {
@@ -2495,16 +2659,16 @@
             try {
                 const client = ensureSffsClient();
                 setSffsStatus(`Reading ${filename}...`);
-                
+
                 /* Initialize SparseImage if needed */
                 if (!cc3200FlashImage) {
                     await initializeFlashImage();
                 }
-                
+
                 /* Find file in FAT for block location */
                 const listResult = await client.listFiles({ inactive: false });
                 const fatEntry = listResult.files.find(f => f.fname === filename);
-                
+
                 if (!fatEntry) {
                     throw new Error(`SFFS: file not found in FAT (${filename})`);
                 }
@@ -2512,10 +2676,10 @@
                 /* Calculate byte offset from FAT entry */
                 const blockSize = fatEntry.blockSize;
                 const headerOffset = fatEntry.startBlock * blockSize;
-                
+
                 /* First, read the 8-byte SFFS file header to get actual file size */
                 logToConsole(`SFFS: reading file header at 0x${headerOffset.toString(16)}`, 'info');
-                
+
                 /* Use SparseImage to read header */
                 await cc3200FlashImage.prefetch(headerOffset, 8);
                 const header = await cc3200FlashImage.subarray_async(headerOffset, headerOffset + 8);
@@ -2523,13 +2687,13 @@
                 /* Parse file size from header (first 4 bytes, little-endian) */
                 const fileSize = le32From(header, 0) & 0xffffff;
                 const headerHex = Array.from(header).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                
+
                 logToConsole(`SFFS: file header [${headerHex}] fileSize=${fileSize} bytes`, 'info');
                 logToConsole(`SFFS: reading '${filename}' startBlock=${fatEntry.startBlock} (0x${fatEntry.startBlock.toString(16)}) dataOffset=0x${(headerOffset + 8).toString(16)} fileSize=${fileSize}`, 'info');
 
                 /* Read file data starting after the 8-byte header using SparseImage */
                 const dataOffset = headerOffset + 8;
-                
+
                 /* Prefetch file data in chunks to show progress */
                 const blockReadSize = 4096;
                 let pos = 0;
@@ -2746,7 +2910,7 @@
         }
 
         async function ccStorageReadInfoAndRender() {
-            if (!cc3200Serial || !espSerial || !espSerial.port) {
+            if (!cc3200Serial || !espSerial) {
                 logToConsole('Not connected', 'info');
                 return;
             }
@@ -2806,7 +2970,7 @@
         }
 
         async function readFullStorageToFile(storageId, storageName, size, ui = null) {
-            if (!cc3200Serial || !espSerial || !espSerial.port) {
+            if (!cc3200Serial || !espSerial) {
                 logToConsole('Not connected', 'info');
                 return;
             }
@@ -2914,7 +3078,7 @@
             const cmd = CC_COMMANDS.find(c => c.id === cmdId);
             if (!cmd) return;
 
-            if (!cc3200Serial || !espSerial || !espSerial.port) {
+            if (!cc3200Serial || !espSerial) {
                 logToConsole('Not connected', 'info');
                 return;
             }
@@ -3071,12 +3235,12 @@
 
                 /* Create SparseImage from the loaded file */
                 cc3200FlashImage = SparseImage.fromBuffer(flashData);
-                
+
                 document.getElementById('statusIndicator').textContent = `Flash Image: ${file.name}`;
                 document.getElementById('statusIndicator').classList.add('connected');
-                
+
                 logToConsole('Flash image loaded successfully - you can now browse SFFS files', 'info');
-                
+
                 /* Auto-refresh SFFS list if available */
                 if (typeof sffsRefreshAndRender === 'function') {
                     await sffsRefreshAndRender();
@@ -3095,6 +3259,9 @@
                 sffsClient = null;
 
                 /* ESP behaves like a UART: log packets go to UI, raw bytes go to CC3200 + hexdump */
+                espSerial.setConfigCallback((parsedConfig) => {
+                    logToConsole(`Config: Baud=${parsedConfig.baud_rate} TX=${parsedConfig.tx_gpio} RX=${parsedConfig.rx_gpio} Reset=${parsedConfig.reset_gpio} Ctrl=${parsedConfig.control_gpio} LED=${parsedConfig.led_gpio} ExtMode=${parsedConfig.extended_mode}`, 'info');
+                });
                 espSerial.setLogCallback((packet) => {
                     logToConsole(packet.text, 'log');
                 });
@@ -3119,8 +3286,7 @@
                 document.getElementById('statusIndicator').classList.add('connected');
 
                 logToConsole('Connected to device', 'info');
-                /* Start reading from port */
-                espSerial.readFromPort();
+
                 await new Promise(resolve => setTimeout(resolve, 500));
                 await espSerial.setControlGpio(true);
                 await espSerial.setResetGpio(false);
@@ -3164,13 +3330,20 @@
             }
         }
 
-        /* Hexdump formatter for console logging */
+        /* Hexdump formatter for console logging - shows hex and ASCII */
         function consoleLogHex(prefix, data) {
             let hexStr = '';
+            let asciiStr = '';
             for (let i = 0; i < data.length; i++) {
-                hexStr += data[i].toString(16).padStart(2, '0').toUpperCase() + ' ';
+                const byte = data[i];
+                hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+                /* ASCII display: printable chars, else . */
+                asciiStr += (byte >= 32 && byte < 127) ? String.fromCharCode(byte) : '.';
             }
-            console.log(prefix, hexStr);
+            /* Only log important messages, not raw packet dumps */
+            //if (prefix.includes('Magic') || prefix.includes('Extended')) {
+            //logToConsole(`${prefix} [${data.length} bytes] HEX: ${hexStr.trim()} | ASCII: "${asciiStr}"`, 'info');
+            //}
         }
 
         async function sendCommand() {
@@ -3178,22 +3351,20 @@
             const command = input.value;
 
             if (!command) return;
-            if (!espSerial || !espSerial.port) {
+            if (!espSerial) {
                 logToConsole('Not connected', 'info');
                 return;
             }
 
             try {
-                const writer = espSerial.port.writable.getWriter();
                 const encoder = new TextEncoder();
                 const data = encoder.encode(command + '\n');
-                await writer.write(data);
-                writer.releaseLock();
-                consoleLogHex('TX Text:', data);
+                await espSerial.sendData(data);
+                /* consoleLogHex('TX Text:', data); */
 
                 /* Display sent data as hexdump */
-                const hexLines = hexdump(data);
-                logToConsole(hexLines, 'tx');
+                /* const hexLines = hexdump(data); */
+                logToConsole('Text sent', 'tx');
                 input.value = '';
             } catch (err) {
                 logToConsole(`Send error: ${err.message}`, 'info');
@@ -3213,7 +3384,7 @@
         }
 
         async function sendBreak() {
-            if (!espSerial || !espSerial.port) {
+            if (!espSerial) {
                 logToConsole('Not connected', 'info');
                 return;
             }
@@ -3225,7 +3396,7 @@
             const hexString = input.value.trim();
 
             if (!hexString) return;
-            if (!espSerial || !espSerial.port) {
+            if (!espSerial) {
                 logToConsole('Not connected', 'info');
                 return;
             }
@@ -3248,13 +3419,11 @@
                 if (sendMode === 'cc3200') {
                     await cc3200Serial.sendCommand(data);
                 } else {
-                    const writer = espSerial.port.writable.getWriter();
-                    await writer.write(data);
-                    writer.releaseLock();
-                    consoleLogHex('TX Hex:', data);
+                    await espSerial.sendData(data);
+                    /* consoleLogHex('TX Hex:', data); */
 
-                    const hexLines = hexdump(data);
-                    logToConsole(hexLines, 'tx');
+                    /* const hexLines = hexdump(data); */
+                    logToConsole('Hex sent', 'tx');
                 }
 
                 input.value = '';
@@ -3268,7 +3437,7 @@
         }
 
         async function setResetGpio(state) {
-            if (!espSerial || !espSerial.port) {
+            if (!espSerial) {
                 document.getElementById('resetCheckbox').checked = false;
                 return;
             }
@@ -3282,7 +3451,7 @@
         }
 
         async function setControlGpio(state) {
-            if (!espSerial || !espSerial.port) {
+            if (!espSerial) {
                 document.getElementById('controlCheckbox').checked = false;
                 return;
             }

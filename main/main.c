@@ -21,6 +21,7 @@ uartgw_config_t config = {
     .reset_gpio = UART_DEFAULT_RESET_GPIO,
     .control_gpio = UART_DEFAULT_CONTROL_GPIO,
     .led_gpio = UART_DEFAULT_LED_GPIO,
+    .extended_mode = 0,
 };
 
 static void initialize_nvs(void)

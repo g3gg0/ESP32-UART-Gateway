@@ -22,39 +22,15 @@
 #define NVS_KEY_RESET_GPIO "reset_gpio"
 #define NVS_KEY_CONTROL_GPIO "control_gpio"
 #define NVS_KEY_LED_GPIO "led_gpio"
+#define NVS_KEY_EXTENDED_MODE "ext_mode"
 
-/* Magic bytes: pattern for config packet identification */
-const uint8_t uart_config_magic[UART_CONFIG_MAGIC_SIZE] = {
-    0x55,
-    0x41,
-    0x52,
-    0x54,
-    0x47,
-    0x57,
-    0x01,
-    0x00};
-
-/* Magic bytes: pattern for control packet identification */
-const uint8_t uart_control_magic[UART_CONTROL_MAGIC_SIZE] = {
-    0x43,
-    0x54,
-    0x52,
-    0x4C,
-    0x47,
-    0x57,
-    0x01,
-    0x00};
-
-/* Magic bytes: pattern for log message packet identification */
-const uint8_t uart_logmsg_magic[UART_LOGMSG_MAGIC_SIZE] = {
-    0x4C,
-    0x4F,
-    0x47,
-    0x4D,
-    0x53,
-    0x47,
-    0x01,
-    0x00};
+/* Magic bytes: type 0x000A packet with 8-byte payload (length=12 includes header, type=0x000A in little-endian) */
+const uint8_t uart_extmode_magic[UART_EXTMODE_MAGIC_SIZE] = {
+    0x0C, 0x00,             /* length: 12 (4 bytes header + 8 bytes payload) */
+    0x0A, 0x00,             /* type: 0x000A */
+    0x55, 0x41, 0x52, 0x54, /* U A R T */
+    0x47, 0x57, 0x45, 0x58  /* G W E X */
+};
 
 /* CDC buffer for data flow */
 #define CDC_BUFFER_SIZE 64
@@ -65,14 +41,10 @@ static TaskHandle_t cdc_write_task_handle = NULL;
 static TaskHandle_t uart_read_task_handle = NULL;
 static TaskHandle_t uart_write_task_handle = NULL;
 
-/* Queue for config responses */
-static QueueHandle_t config_response_queue = NULL;
-
 /* Task buffers (global to save stack space) */
 static uint8_t cdc_read_buffer[CDC_BUFFER_SIZE];
 static uint8_t uart_write_buffer[UART_BUFFER_SIZE];
 static uint8_t uart_read_buffer[UART_BUFFER_SIZE];
-static uint8_t cdc_write_buffer[CDC_BUFFER_SIZE];
 
 typedef struct
 {
@@ -82,9 +54,8 @@ typedef struct
     bool is_initializing;
     uint8_t config_buffer[UART_CONFIG_PACKET_SIZE];
     size_t config_buffer_pos;
-    uart_config_callback_t config_callback;
     StreamBufferHandle_t cdc_to_uart_buffer;
-    StreamBufferHandle_t uart_to_cdc_buffer;
+    QueueHandle_t uart_to_cdc_buffer;
 } uart_gateway_ctx_t;
 
 static uart_gateway_ctx_t gateway_ctx = {
@@ -92,7 +63,6 @@ static uart_gateway_ctx_t gateway_ctx = {
     .is_configured = false,
     .is_initializing = false,
     .config_buffer_pos = 0,
-    .config_callback = NULL,
     .cdc_to_uart_buffer = NULL,
     .uart_to_cdc_buffer = NULL,
     .current_config = {
@@ -102,56 +72,47 @@ static uart_gateway_ctx_t gateway_ctx = {
         .reset_gpio = UART_DEFAULT_RESET_GPIO,
         .control_gpio = UART_DEFAULT_CONTROL_GPIO,
         .led_gpio = UART_DEFAULT_LED_GPIO,
+        .extended_mode = 0,
     },
 };
 
-
 static esp_err_t reconfigure_uart(const uartgw_config_t *config);
 
-static void IRAM_ATTR send_current_config()
+static void send_current_config(void)
 {
-    /* Queue the config response to be sent by cdc_write_task */
-    if (!config_response_queue)
+    /* Only send config responses in extended mode */
+    if (gateway_ctx.current_config.extended_mode == 0)
     {
         return;
     }
 
-    uint8_t response_packet[UART_CONFIG_PACKET_SIZE];
-    size_t response_len;
-    uart_gateway_build_response_packet(response_packet, &response_len);
+    /* Allocate complete packet */
+    uart_packet_header_t *packet = (uart_packet_header_t *)malloc(UART_PACKET_HEADER_SIZE + UART_CONFIG_PACKET_SIZE);
+    if (packet == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to allocate config response packet");
+        return;
+    }
+
+    /* Build header */
+    packet->length = (uint16_t)(UART_PACKET_HEADER_SIZE + UART_CONFIG_PACKET_SIZE); /* length includes header and payload */
+    packet->type = UART_PACKET_TYPE_CONFIG;
+
+    /* Build config payload directly in malloc'd memory */
+    uart_gateway_build_response_packet((uart_config_packet_t *)PTR_BEHIND(packet));
 
     /* Send to queue */
-    BaseType_t yield_required = pdFALSE;
-    if (xQueueSendFromISR(config_response_queue, response_packet, &yield_required) == pdPASS)
+    esp_err_t err = queue_packet(packet);
+    if (err == ESP_OK)
     {
-        ESP_LOGI(TAG, "Config response queued (%zu bytes)", response_len);
-        if (yield_required)
-        {
-            portYIELD_FROM_ISR();
-        }
+        ESP_LOGI(TAG, "Config response queued successfully (%zu bytes)", packet->length);
     }
     else
     {
-        ESP_LOGW(TAG, "Failed to queue config response");
+        ESP_LOGE(TAG, "Failed to queue config response: %s", esp_err_to_name(err));
     }
 }
 
-/* Callback: Queue config response when it changes */
-static void IRAM_ATTR on_config_changed(const uartgw_config_t *config)
-{
-    ESP_LOGI(TAG, "CONFIG CHANGE CALLBACK: baud=%lu, TX=%u, RX=%u", config->baud_rate, config->tx_gpio, config->rx_gpio);
-
-    esp_err_t err = uart_gateway_save_config();
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to save configuration: %s", esp_err_to_name(err));
-    }
-    else
-    {
-        ESP_LOGI(TAG, "Configuration saved to NVS");
-    }
-    send_current_config();
-}
 
 void send_message(const char *fmt, ...)
 {
@@ -161,9 +122,9 @@ void send_message(const char *fmt, ...)
         return;
     }
 
-    if (gateway_ctx.uart_to_cdc_buffer == NULL)
+    /* In extended_mode == 0, log messages are disabled */
+    if (gateway_ctx.current_config.extended_mode == 0)
     {
-        ESP_LOGE(TAG, "send_message: UART->CDC buffer not initialized");
         return;
     }
 
@@ -181,39 +142,28 @@ void send_message(const char *fmt, ...)
 
     size_t msg_len = (written >= (int)sizeof(message)) ? (sizeof(message) - 1) : (size_t)written;
 
-    uint8_t packet[UART_LOGMSG_HEADER_SIZE + UART_LOGMSG_MAX_LEN];
-    uart_logmsg_header_t header;
-    memcpy(header.magic, uart_logmsg_magic, UART_LOGMSG_MAGIC_SIZE);
-    header.length = (uint32_t)msg_len;
-    for (size_t i = 0; i < UART_LOGMSG_MAGIC_SIZE; i++)
+    /* In extended_mode == 1, use packet header with type 0x03 for logs */
+    size_t packet_size = UART_PACKET_HEADER_SIZE + msg_len;
+    uart_packet_header_t *packet = (uart_packet_header_t *)malloc(packet_size);
+    if (packet == NULL)
     {
-        header.inv_magic[i] = uart_logmsg_magic[i] ^ 0xFF;
+        ESP_LOGE(TAG, "Failed to allocate log packet");
+        return;
     }
 
-    memcpy(packet, &header, UART_LOGMSG_HEADER_SIZE);
+    packet->length = (uint16_t)(sizeof(uart_packet_header_t) + msg_len);
+    packet->type = UART_PACKET_TYPE_LOG;
+
     if (msg_len > 0)
     {
-        memcpy(packet + UART_LOGMSG_HEADER_SIZE, message, msg_len);
+        memcpy(PTR_BEHIND(packet), message, msg_len);
     }
 
-    esp_err_t err = uart_gateway_queue_uart_data(packet, UART_LOGMSG_HEADER_SIZE + msg_len);
+    esp_err_t err = queue_packet(packet);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "send_message: failed to queue log packet: %s", esp_err_to_name(err));
     }
-}
-
-/* Check if magic bytes match (normal or inverted) */
-static bool check_magic(const uint8_t *data, const uint8_t *magic, size_t magic_len, bool inverted)
-{
-    for (size_t i = 0; i < magic_len; i++)
-    {
-        if (data[i] != (magic[i] ^ ((inverted) ? 0xFF : 0x00)))
-        {
-            return false;
-        }
-    }
-    return true;
 }
 
 /* Parse configuration packet */
@@ -221,25 +171,12 @@ static bool parse_config_packet(const uint8_t *packet_data, size_t bytes_read, u
 {
     if (bytes_read < UART_CONFIG_PACKET_SIZE)
     {
+        send_message("Config packet: invalid length %zu (expected %u)", bytes_read, UART_CONFIG_PACKET_SIZE);
         return false;
     }
 
     /* Cast to struct for easy access */
     const uart_config_packet_t *pkt = (const uart_config_packet_t *)packet_data;
-
-    /* Check magic at start */
-    if (!check_magic(pkt->magic, uart_config_magic, UART_CONFIG_MAGIC_SIZE, false))
-    {
-        ESP_LOGW(TAG, "Config packet: magic mismatch at start");
-        return false;
-    }
-
-    /* Check inverted magic at end */
-    if (!check_magic(pkt->inv_magic, uart_config_magic, UART_CONFIG_MAGIC_SIZE, true))
-    {
-        ESP_LOGW(TAG, "Config packet: inverted magic mismatch");
-        return false;
-    }
 
     /* Extract from struct (automatic little-endian) */
     uint32_t baud = pkt->baud_rate;
@@ -248,31 +185,32 @@ static bool parse_config_packet(const uint8_t *packet_data, size_t bytes_read, u
     uint8_t reset_gpio = pkt->reset_gpio;
     uint8_t control_gpio = pkt->control_gpio;
     uint8_t led_gpio = pkt->led_gpio;
+    uint8_t extended_mode = pkt->extended_mode;
 
     /* Validate parameters (baud_rate == 0 is query mode, allowed) */
     if (baud != 0)
     {
         if (baud < 300 || baud > 1000000)
         {
-            ESP_LOGW(TAG, "Invalid baud rate: %lu", baud);
+            send_message("Invalid baud rate: %lu", baud);
             return false;
         }
 
         if (tx_gpio > 43 || rx_gpio > 43)
         {
-            ESP_LOGW(TAG, "Invalid GPIO pins: TX=%u, RX=%u", tx_gpio, rx_gpio);
+            send_message("Invalid GPIO pins: TX=%u, RX=%u", tx_gpio, rx_gpio);
             return false;
         }
 
         if ((reset_gpio > 43 && reset_gpio != 0xFF) || (control_gpio > 43 && control_gpio != 0xFF) || (led_gpio > 43 && led_gpio != 0xFF))
         {
-            ESP_LOGW(TAG, "Invalid GPIO pins: RESET=%u, CONTROL=%u, LED=%u", reset_gpio, control_gpio, led_gpio);
+            send_message("Invalid GPIO pins: RESET=%u, CONTROL=%u, LED=%u", reset_gpio, control_gpio, led_gpio);
             return false;
         }
 
         if (tx_gpio == rx_gpio)
         {
-            ESP_LOGW(TAG, "TX and RX pins cannot be the same");
+            send_message("TX and RX pins cannot be the same");
             return false;
         }
     }
@@ -283,42 +221,22 @@ static bool parse_config_packet(const uint8_t *packet_data, size_t bytes_read, u
     config->reset_gpio = reset_gpio;
     config->control_gpio = control_gpio;
     config->led_gpio = led_gpio;
+    config->extended_mode = extended_mode;
 
     return true;
 }
 
 /* Parse control packet and execute command */
-static bool parse_control_packet(const uint8_t *packet_data, size_t bytes_read)
+static bool parse_control_command(const char *cmd, size_t cmd_len)
 {
-    if (bytes_read < UART_CONTROL_PACKET_SIZE)
-    {
-        return false;
-    }
-
-    /* Cast to struct for easy access */
-    const uart_control_packet_t *pkt = (const uart_control_packet_t *)packet_data;
-
-    /* Check magic at start */
-    if (!check_magic(pkt->magic, uart_control_magic, UART_CONTROL_MAGIC_SIZE, false))
-    {
-        return false;
-    }
-
-    /* Check inverted magic at end */
-    if (!check_magic(pkt->inv_magic, uart_control_magic, UART_CONTROL_MAGIC_SIZE, true))
-    {
-        return false;
-    }
-
-    /* Parse command string */
-    char cmd[UART_CONTROL_CMD_SIZE + 1] = {0};
-    memcpy(cmd, pkt->command, UART_CONTROL_CMD_SIZE);
-
-    /* Ensure null termination */
-    cmd[UART_CONTROL_CMD_SIZE] = '\0';
+    /* Ensure null termination for safety */
+    char cmd_buffer[UART_CONTROL_CMD_SIZE + 1];
+    size_t copy_len = (cmd_len > UART_CONTROL_CMD_SIZE) ? UART_CONTROL_CMD_SIZE : cmd_len;
+    memcpy(cmd_buffer, cmd, copy_len);
+    cmd_buffer[copy_len] = '\0';
 
     /* Parse R:x (Reset control) */
-    if (cmd[0] == 'R' && cmd[1] == ':')
+    if (cmd_buffer[0] == 'R' && cmd_buffer[1] == ':')
     {
         /* Check if reset GPIO is configured (not 0xFF) */
         if (gateway_ctx.current_config.reset_gpio == 0xFF)
@@ -328,11 +246,11 @@ static bool parse_control_packet(const uint8_t *packet_data, size_t bytes_read)
         }
 
         /* Set reset line state */
-        gpio_set_level(gateway_ctx.current_config.reset_gpio, (cmd[2] == '0') ? 0 : 1);
+        gpio_set_level(gateway_ctx.current_config.reset_gpio, (cmd_buffer[2] == '0') ? 0 : 1);
         return true;
     }
     /* Parse C:x (Control pin) */
-    else if (cmd[0] == 'C' && cmd[1] == ':')
+    else if (cmd_buffer[0] == 'C' && cmd_buffer[1] == ':')
     {
         /* Check if control GPIO is configured (not 0xFF) */
         if (gateway_ctx.current_config.control_gpio == 0xFF)
@@ -341,13 +259,13 @@ static bool parse_control_packet(const uint8_t *packet_data, size_t bytes_read)
             return false;
         }
 
-        gpio_set_level(gateway_ctx.current_config.control_gpio, (cmd[2] == '0') ? 0 : 1);
+        gpio_set_level(gateway_ctx.current_config.control_gpio, (cmd_buffer[2] == '0') ? 0 : 1);
         return true;
     }
     /* Parse B:xx (Break condition) */
-    else if (cmd[0] == 'B' && cmd[1] == ':')
+    else if (cmd_buffer[0] == 'B' && cmd_buffer[1] == ':')
     {
-        int brk_len = atoi(&cmd[2]);
+        int brk_len = atoi(&cmd_buffer[2]);
 
         if (!gateway_ctx.is_configured)
         {
@@ -367,24 +285,25 @@ static bool parse_control_packet(const uint8_t *packet_data, size_t bytes_read)
         gpio_config(&io_conf);
         gpio_set_level(gateway_ctx.current_config.tx_gpio, 0);
 
-        if(brk_len < 20)
+        if (brk_len < 20)
         {
             esp_rom_delay_us(brk_len * 1000);
         }
         else
         {
-            vTaskDelay(pdMS_TO_TICKS(brk_len));            
+            vTaskDelay(pdMS_TO_TICKS(brk_len));
         }
 
         gpio_set_level(gateway_ctx.current_config.tx_gpio, 1);
 
         reconfigure_uart(&gateway_ctx.current_config);
 
+        /* Don't send config response for break commands */
         return true;
     }
     else
     {
-        send_message("Unknown control command: '%s'", cmd);
+        send_message("Unknown control command: '%s'", cmd_buffer);
         return false;
     }
 }
@@ -520,13 +439,6 @@ static esp_err_t reconfigure_uart(const uartgw_config_t *config)
 
     ESP_LOGI(TAG, "UART reconfigured: baud=%lu, TX=%u, RX=%u", config->baud_rate, config->tx_gpio, config->rx_gpio);
 
-    /* Call callback if registered and not during initialization */
-    if (gateway_ctx.config_callback != NULL && !gateway_ctx.is_initializing)
-    {
-        ESP_LOGI(TAG, "Calling config change callback");
-        gateway_ctx.config_callback(config);
-    }
-
     return ESP_OK;
 }
 
@@ -557,14 +469,14 @@ void uart_gateway_init(const uartgw_config_t *config)
 
     if (gateway_ctx.uart_to_cdc_buffer == NULL)
     {
-        gateway_ctx.uart_to_cdc_buffer = xStreamBufferCreate(STREAM_BUFFER_SIZE, 1);
+        gateway_ctx.uart_to_cdc_buffer = xQueueCreate(32, sizeof(uart_packet_header_t *));
         if (gateway_ctx.uart_to_cdc_buffer == NULL)
         {
-            ESP_LOGE(TAG, "Failed to create UART->CDC stream buffer");
+            ESP_LOGE(TAG, "Failed to create UART->CDC packet queue");
         }
         else
         {
-            ESP_LOGI(TAG, "UART->CDC stream buffer created (%u bytes)", STREAM_BUFFER_SIZE);
+            ESP_LOGI(TAG, "UART->CDC packet queue created (32 items)");
         }
     }
 
@@ -577,12 +489,9 @@ void uart_gateway_init(const uartgw_config_t *config)
     init_unused_gpios_to_gnd(config->tx_gpio, config->rx_gpio, config->reset_gpio, config->control_gpio, config->led_gpio);
 
     gateway_ctx.is_initializing = false;
-}
 
-void uart_gateway_register_callback(uart_config_callback_t callback)
-{
-    gateway_ctx.config_callback = callback;
-    ESP_LOGI(TAG, "Configuration change callback registered");
+    /* Send startup message to unblock the USB CDC read on host side */
+    send_message("ESP32C3 UART Gateway initialized - waiting for magic bytes");
 }
 
 esp_err_t uart_gateway_configure(const uartgw_config_t *config)
@@ -596,8 +505,10 @@ esp_err_t uart_gateway_configure(const uartgw_config_t *config)
     {
         return ESP_ERR_INVALID_STATE;
     }
+    
     reconfigure_gpio(config);
     reconfigure_uart(config);
+
     /* Initialize all unused GPIO pins to GND with strong drive */
     init_unused_gpios_to_gnd(config->tx_gpio, config->rx_gpio, config->reset_gpio, config->control_gpio, config->led_gpio);
 
@@ -671,7 +582,7 @@ int uart_gateway_receive(uint8_t *buffer, size_t max_length)
     }
 
     int bytes_read = uart_read_bytes(gateway_ctx.uart_num, buffer, max_length, pdMS_TO_TICKS(10));
-    
+
     return bytes_read;
 }
 
@@ -755,19 +666,29 @@ esp_err_t uart_gateway_save_config(void)
         return err;
     }
 
+    /* Save extended mode */
+    err = nvs_set_u8(nvs_handle, NVS_KEY_EXTENDED_MODE, gateway_ctx.current_config.extended_mode);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to save extended mode: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
     /* Commit changes */
     err = nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
 
     if (err == ESP_OK)
     {
-        ESP_LOGI(TAG, "Configuration saved to NVS: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u",
+        ESP_LOGI(TAG, "Configuration saved to NVS: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u, EXT_MODE=%u",
                  gateway_ctx.current_config.baud_rate,
                  gateway_ctx.current_config.tx_gpio,
                  gateway_ctx.current_config.rx_gpio,
                  gateway_ctx.current_config.reset_gpio,
                  gateway_ctx.current_config.control_gpio,
-                 gateway_ctx.current_config.led_gpio);
+                 gateway_ctx.current_config.led_gpio,
+                 gateway_ctx.current_config.extended_mode);
     }
     else
     {
@@ -865,23 +786,32 @@ esp_err_t uart_gateway_load_config(uartgw_config_t *loaded_config)
         return err;
     }
 
+    /* Load extended mode (optional, use default 0 if not found) */
+    err = nvs_get_u8(nvs_handle, NVS_KEY_EXTENDED_MODE, &loaded_config->extended_mode);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        loaded_config->extended_mode = 0;
+        ESP_LOGI(TAG, "Extended mode not in NVS, using default: 0");
+        err = ESP_OK;
+    }
+    else if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to load extended mode: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
     nvs_close(nvs_handle);
 
     return err;
 }
 
-void uart_gateway_build_response_packet(uint8_t *packet, size_t *packet_len)
+void uart_gateway_build_response_packet(uart_config_packet_t *pkt)
 {
-    if (packet == NULL || packet_len == NULL)
+    if (pkt == NULL)
     {
         return;
     }
-
-    /* Cast to struct and fill it */
-    uart_config_packet_t *pkt = (uart_config_packet_t *)packet;
-
-    /* Fill magic at start */
-    memcpy(pkt->magic, uart_config_magic, UART_CONFIG_MAGIC_SIZE);
 
     /* Fill config (automatic little-endian in struct) */
     pkt->baud_rate = gateway_ctx.current_config.baud_rate;
@@ -890,14 +820,7 @@ void uart_gateway_build_response_packet(uint8_t *packet, size_t *packet_len)
     pkt->reset_gpio = gateway_ctx.current_config.reset_gpio;
     pkt->control_gpio = gateway_ctx.current_config.control_gpio;
     pkt->led_gpio = gateway_ctx.current_config.led_gpio;
-
-    /* Fill inverted magic at end */
-    for (int i = 0; i < UART_CONFIG_MAGIC_SIZE; i++)
-    {
-        pkt->inv_magic[i] = uart_config_magic[i] ^ 0xFF;
-    }
-
-    *packet_len = UART_CONFIG_PACKET_SIZE;
+    pkt->extended_mode = gateway_ctx.current_config.extended_mode;
 
     ESP_LOGI(TAG, "Response packet built: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u",
              gateway_ctx.current_config.baud_rate,
@@ -944,38 +867,46 @@ int uart_gateway_receive_cdc_queue(uint8_t *buffer, size_t max_length)
 }
 
 /* Queue data from UART to CDC */
-esp_err_t uart_gateway_queue_uart_data(const uint8_t *data, size_t length)
+esp_err_t queue_packet(uart_packet_header_t *packet)
 {
-    if (gateway_ctx.uart_to_cdc_buffer == NULL || data == NULL || length == 0)
+    if (packet == NULL)
     {
-        ESP_LOGE(TAG, "Queue UART: invalid args - buffer=%p, data=%p, len=%zu", gateway_ctx.uart_to_cdc_buffer, data, length);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (gateway_ctx.uart_to_cdc_buffer == NULL)
+    {
+        free(packet);
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Block indefinitely until all data fits in the buffer (back pressure) */
-    size_t bytes_sent = xStreamBufferSend(gateway_ctx.uart_to_cdc_buffer, data, length, portMAX_DELAY);
-    if (bytes_sent == length)
+    /* Queue the packet pointer (block indefinitely for back pressure) */
+    if (xQueueSend(gateway_ctx.uart_to_cdc_buffer, &packet, portMAX_DELAY) == pdTRUE)
     {
-        ESP_LOGD(TAG, "Buffered %zu bytes UART->CDC", length);
         taskYIELD();
         return ESP_OK;
     }
 
-    ESP_LOGE(TAG, "Failed to buffer %zu bytes UART->CDC (sent %zu)", length, bytes_sent);
+    ESP_LOGE(TAG, "Failed to queue packet to UART->CDC");
+    free(packet);
     return ESP_FAIL;
 }
 
 /* Receive data from UART buffer (intended for CDC) */
-int uart_gateway_receive_uart_queue(uint8_t *buffer, size_t max_length)
+/* Returns pointer to packet header on success, NULL on timeout */
+uart_packet_header_t *unqueue_packet(void)
 {
-    if (gateway_ctx.uart_to_cdc_buffer == NULL || buffer == NULL || max_length == 0)
+    if (gateway_ctx.uart_to_cdc_buffer == NULL)
     {
-        return 0;
+        return NULL;
     }
 
-    size_t bytes_received = xStreamBufferReceive(gateway_ctx.uart_to_cdc_buffer, buffer, max_length, pdMS_TO_TICKS(20));
+    uart_packet_header_t *packet = NULL;
+    if (xQueueReceive(gateway_ctx.uart_to_cdc_buffer, &packet, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        return packet;
+    }
 
-    return bytes_received;
+    return NULL;
 }
 
 /* Task: Read from USB CDC, queue to UART */
@@ -984,17 +915,31 @@ static void cdc_read_task(void *pvParameters)
     int bytes_read;
     uartgw_config_t new_config;
 
-    ESP_LOGI(TAG, "CDC read task started");
+    /* Extended mode state machine */
+    uint8_t header_buffer[UART_PACKET_HEADER_SIZE];
+    uart_packet_header_t *header = (uart_packet_header_t *)header_buffer;
+    size_t header_pos = 0;
+    bool header_received = false;
+
+    uint8_t *payload_buffer = NULL;
+    size_t payload_needed = 0;
+    size_t payload_pos = 0;
+
+    /* Normal mode magic detection ring buffer */
+    uint8_t magic_ring[UART_EXTMODE_MAGIC_SIZE] = {0};
+    size_t magic_ring_pos = 0;
 
     /* Wait a bit for system to fully initialize */
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "CDC read task ready");
+    // vTaskDelay(200 / portTICK_PERIOD_MS);
+
+    /* Send startup message to unblock host reader */
+    send_message("ESP32C3 UART Gateway ready");
 
     while (1)
     {
         if (!uart_gateway_is_ready())
         {
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            vTaskDelay(50 / portTICK_PERIOD_MS);
             continue;
         }
 
@@ -1011,50 +956,208 @@ static void cdc_read_task(void *pvParameters)
             bytes_read = (int)CDC_BUFFER_SIZE;
         }
 
-        /* Ensure all available data is read in case we were interrupted.
-         * Never read beyond the remaining space in cdc_read_buffer.
-         */
-        if (bytes_read < (int)CDC_BUFFER_SIZE)
+        /* NORMAL MODE: search for magic bytes in incoming data */
+        if (gateway_ctx.current_config.extended_mode == 0)
         {
-            const uint32_t remaining = (uint32_t)(CDC_BUFFER_SIZE - (size_t)bytes_read);
-            int bytes_read_2 = usb_serial_jtag_read_bytes(&cdc_read_buffer[bytes_read], remaining, pdMS_TO_TICKS(10));
-            if (bytes_read_2 > 0)
-            {
-                if (bytes_read + bytes_read_2 > (int)CDC_BUFFER_SIZE)
-                {
-                    bytes_read_2 = (int)CDC_BUFFER_SIZE - bytes_read;
-                }
-                bytes_read += bytes_read_2;
-            }
-        }
+            /* Accumulate bytes in ring buffer */
+            int bytes_to_add = (bytes_read < (int)(UART_EXTMODE_MAGIC_SIZE - magic_ring_pos))
+                                   ? bytes_read
+                                   : (UART_EXTMODE_MAGIC_SIZE - magic_ring_pos);
 
-        /* Check if this is a config packet */
-        if (bytes_read == 64)
-        {
-            if (parse_config_packet(cdc_read_buffer, bytes_read, &new_config))
+            if (bytes_to_add > 0)
             {
-                if (new_config.baud_rate == 0)
+                memcpy(&magic_ring[magic_ring_pos], cdc_read_buffer, bytes_to_add);
+                magic_ring_pos += bytes_to_add;
+            }
+
+            /* Check if we have enough bytes and if they match magic */
+            if (magic_ring_pos >= UART_EXTMODE_MAGIC_SIZE)
+            {
+                if (memcmp(magic_ring, uart_extmode_magic, UART_EXTMODE_MAGIC_SIZE) == 0)
                 {
-                    /* Query mode: send current config */
-                    ESP_LOGI(TAG, "CDC: config query received, sending current config");
-                    send_current_config();
+                    /* Magic found! Switch to extended mode */
+                    gateway_ctx.current_config.extended_mode = 1;
+                    header_pos = 0;
+                    if (payload_buffer)
+                    {
+                        free(payload_buffer);
+                        payload_buffer = NULL;
+                    }
+                    payload_needed = 0;
+                    payload_pos = 0;
+                    memset(magic_ring, 0, sizeof(magic_ring));
+                    magic_ring_pos = 0;
+
+                    send_message("Extended mode activated (temporary, until reboot)");
+
+                    /* Process any remaining bytes in this read as extended mode */
+                    if (bytes_to_add < bytes_read)
+                    {
+                        int remaining = bytes_read - bytes_to_add;
+                        memmove(cdc_read_buffer, &cdc_read_buffer[bytes_to_add], remaining);
+                        bytes_read = remaining;
+                        /* Fall through to extended mode processing below */
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    /* Not magic, shift buffer forward and queue first byte */
+                    led_signal_uart_activity();
+                    uart_gateway_queue_cdc_data(&magic_ring[0], 1);
+
+                    /* Shift remaining bytes forward */
+                    memmove(magic_ring, &magic_ring[1], UART_EXTMODE_MAGIC_SIZE - 1);
+                    magic_ring_pos = UART_EXTMODE_MAGIC_SIZE - 1;
+
+                    /* Add next byte from current read if available */
+                    if (bytes_to_add < bytes_read)
+                    {
+                        magic_ring[magic_ring_pos] = cdc_read_buffer[bytes_to_add];
+                        magic_ring_pos++;
+
+                        /* Queue remaining bytes from this read */
+                        int remaining = bytes_read - bytes_to_add - 1;
+                        if (remaining > 0)
+                        {
+                            led_signal_uart_activity();
+                            uart_gateway_queue_cdc_data(&cdc_read_buffer[bytes_to_add + 1], remaining);
+                        }
+                    }
                     continue;
                 }
-                ESP_LOGI(TAG, "CDC: VALID CONFIG: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u", new_config.baud_rate, new_config.tx_gpio, new_config.rx_gpio, new_config.reset_gpio, new_config.control_gpio, new_config.led_gpio);
-                uart_gateway_configure(&new_config);
-                continue;
             }
-
-            if (parse_control_packet(cdc_read_buffer, bytes_read))
+            else
             {
-                ESP_LOGI(TAG, "CDC: received control packet, processed accordingly");
+                /* Not enough bytes yet, continue accumulating */
                 continue;
             }
         }
 
-        led_signal_uart_activity();
-        /* Non-config packets go to UART */
-        uart_gateway_queue_cdc_data(cdc_read_buffer, bytes_read);
+        /* EXTENDED MODE: parse packets with headers */
+        if (gateway_ctx.current_config.extended_mode == 1)
+        {
+            /* Process incoming bytes */
+            for (int i = 0; i < bytes_read; i++)
+            {
+                uint8_t data_byte = cdc_read_buffer[i];
+
+                if (!header_received)
+                {
+                    /* State 1: Reading header */
+                    if (header_pos < UART_PACKET_HEADER_SIZE)
+                    {
+                        header_buffer[header_pos++] = data_byte;
+                    }
+
+                    /* Header complete, parse it */
+                    if (header_pos == UART_PACKET_HEADER_SIZE)
+                    {
+                        header_pos = 0;
+                        header_received = true;
+
+                        /* Validate length (minimum 4 for header) */
+                        if (header->length < sizeof(uart_packet_header_t))
+                        {
+                            ESP_LOGW(TAG, "Invalid packet length: %u (minimum %zu), resetting", header->length, sizeof(uart_packet_header_t));
+                            header_received = false;
+                            continue;
+                        }
+
+                        payload_needed = header->length - sizeof(uart_packet_header_t);
+                        payload_pos = 0;
+
+                        /* Allocate payload buffer if needed */
+                        if (payload_needed > 0)
+                        {
+                            if (payload_buffer)
+                            {
+                                free(payload_buffer);
+                            }
+                            payload_buffer = (uint8_t *)malloc(payload_needed);
+                            if (!payload_buffer)
+                            {
+                                ESP_LOGE(TAG, "Failed to allocate %zu bytes for packet payload", payload_needed);
+                                header_received = false;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    /* State 2: Reading payload */
+                    if (payload_pos < payload_needed)
+                    {
+                        payload_buffer[payload_pos++] = data_byte;
+                    }
+
+                    /* Payload complete, process packet */
+                    if (payload_pos == payload_needed)
+                    {
+                        header_received = false;
+                        payload_pos = 0;
+
+                        switch (header->type)
+                        {
+                        case UART_PACKET_TYPE_DATA:
+                            /* Type 0x00: Normal serial data - send to UART */
+                            led_signal_uart_activity();
+                            uart_gateway_queue_cdc_data(payload_buffer, payload_needed);
+                            break;
+
+                        case UART_PACKET_TYPE_CONFIG:
+                            /* Type 0x01: Configuration packet */
+                            if (parse_config_packet(payload_buffer, payload_needed, &new_config))
+                            {
+                                if (new_config.baud_rate == 0)
+                                {
+                                    send_message("CONFIG query received");
+                                    send_current_config();
+                                }
+                                else
+                                {
+                                    send_message("CONFIG update");
+                                    uart_gateway_configure(&new_config);
+                                    send_current_config();
+                                }
+                            }
+                            else
+                            {
+                                send_message("Failed to parse CONFIG packet");
+                            }
+                            break;
+
+                        case UART_PACKET_TYPE_CONTROL:
+                            /* Type 0x02: Control commands */
+                            parse_control_command((const char *)payload_buffer, payload_needed);
+                            break;
+
+                        case UART_PACKET_TYPE_EXTMODE:
+                            send_message("Extended mode activated");
+                            break;
+
+                        default:
+                            send_message("Unknown packet type: 0x%04X", header->type);
+                            break;
+                        }
+
+                        /* Free payload and reset for next packet */
+                        if (payload_buffer)
+                        {
+                            free(payload_buffer);
+                            payload_buffer = NULL;
+                        }
+                        header_pos = 0;
+                        payload_needed = 0;
+                        payload_pos = 0;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1063,17 +1166,15 @@ static void uart_write_task(void *pvParameters)
 {
     int bytes_to_send;
 
-    ESP_LOGI(TAG, "UART write task started");
-
     /* Wait a bit for system to fully initialize */
-    vTaskDelay(200 / portTICK_PERIOD_MS);
+    // vTaskDelay(200 / portTICK_PERIOD_MS);
     ESP_LOGI(TAG, "UART write task ready");
 
     while (1)
     {
         if (!uart_gateway_is_ready())
         {
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            vTaskDelay(50 / portTICK_PERIOD_MS);
             continue;
         }
 
@@ -1084,9 +1185,8 @@ static void uart_write_task(void *pvParameters)
             continue;
         }
 
-        ESP_LOGI(TAG, "UART write: sending %d bytes to UART", bytes_to_send);
-        led_signal_uart_activity();
         esp_err_t ret = uart_gateway_send(uart_write_buffer, bytes_to_send);
+
         if (ret == ESP_OK)
         {
             ESP_LOGI(TAG, "UART write: sent %d bytes successfully", bytes_to_send);
@@ -1106,14 +1206,14 @@ static void uart_read_task(void *pvParameters)
     ESP_LOGI(TAG, "UART read task started");
 
     /* Wait a bit for system to fully initialize */
-    vTaskDelay(200 / portTICK_PERIOD_MS);
+    // vTaskDelay(200 / portTICK_PERIOD_MS);
     ESP_LOGI(TAG, "UART read task ready");
 
     while (1)
     {
         if (!uart_gateway_is_ready())
         {
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            vTaskDelay(50 / portTICK_PERIOD_MS);
             continue;
         }
 
@@ -1123,15 +1223,22 @@ static void uart_read_task(void *pvParameters)
         {
             continue;
         }
-        ESP_LOGI(TAG, "UART read: received %d bytes", bytes_received);
-        led_signal_uart_activity();
 
-        esp_err_t ret = uart_gateway_queue_uart_data(uart_read_buffer, bytes_received);
-        if (ret == ESP_OK)
+        ESP_LOGI(TAG, "UART read: received %d bytes", bytes_received);
+
+        led_signal_uart_activity();
+        uart_packet_header_t *packet = (uart_packet_header_t *)malloc(sizeof(uart_packet_header_t) + bytes_received);
+        if (packet == NULL)
         {
-            ESP_LOGI(TAG, "UART read: queued %d bytes to CDC", bytes_received);
+            ESP_LOGE(TAG, "UART read: failed to allocate packet");
+            continue;
         }
-        else
+        packet->type = UART_PACKET_TYPE_DATA;
+        packet->length = sizeof(uart_packet_header_t) + bytes_received;
+
+        memcpy(PTR_BEHIND(packet), uart_read_buffer, bytes_received);
+
+        if (queue_packet(packet) != ESP_OK)
         {
             ESP_LOGE(TAG, "UART read: failed to queue %d bytes", bytes_received);
         }
@@ -1141,7 +1248,12 @@ static void uart_read_task(void *pvParameters)
 /* Task: Write queued UART data to CDC */
 static void cdc_write_task(void *pvParameters)
 {
-    int bytes_to_send;
+    uart_packet_header_t *packet_header;
+    uint16_t packet_type;
+    uint16_t packet_length;
+    uint8_t *payload;
+    size_t payload_len;
+    int written;
 
     ESP_LOGI(TAG, "CDC write task started");
 
@@ -1151,60 +1263,96 @@ static void cdc_write_task(void *pvParameters)
 
     while (1)
     {
-        /* First, check for config responses */
-        if (config_response_queue != NULL && xQueueReceive(config_response_queue, cdc_write_buffer, 0) == pdPASS)
+        packet_header = unqueue_packet();
+
+        if (packet_header == NULL)
         {
-            ESP_LOGI(TAG, "CDC write: sending config response packet");
-            int written = usb_serial_jtag_write_bytes(cdc_write_buffer, UART_CONFIG_PACKET_SIZE, pdMS_TO_TICKS(100));
-            if (written == UART_CONFIG_PACKET_SIZE)
+            continue;
+        }
+
+        /* Parse header */
+        packet_length = packet_header->length;
+        packet_type = packet_header->type;
+
+        /* Validate packet length (minimum 2 to include type field) */
+        if (packet_length < sizeof(uart_packet_header_t))
+        {
+            ESP_LOGW(TAG, "CDC write: invalid packet length %u (minimum %zu)", packet_length, sizeof(uart_packet_header_t));
+            free(packet_header);
+            continue;
+        }
+
+        /* Calculate payload length (packet_length includes the type field, so subtract header size) */
+        payload_len = packet_length - sizeof(uart_packet_header_t);
+
+        /* Extract payload pointer (after header) */
+        payload = (uint8_t *)PTR_BEHIND(packet_header);
+
+        ESP_LOGI(TAG, "CDC write: processing packet type=0x%04X, payload_len=%zu, extended_mode=%u",
+                 packet_type, payload_len, gateway_ctx.current_config.extended_mode);
+
+        /* Handle packet based on extended mode */
+        if (gateway_ctx.current_config.extended_mode == 0)
+        {
+            /* Non-extended mode: discard all but UART_PACKET_TYPE_DATA, send only payload */
+            if (packet_type == UART_PACKET_TYPE_DATA)
             {
-                ESP_LOGI(TAG, "CDC write: config response sent successfully");
+                ESP_LOGI(TAG, "CDC write: sending DATA payload (%zu bytes)", payload_len);
+                led_signal_uart_activity();
+                size_t offset = 0;
+                while (offset < payload_len)
+                {
+                    size_t chunk = payload_len - offset;
+                    if (chunk > CDC_BUFFER_SIZE)
+                    {
+                        chunk = CDC_BUFFER_SIZE;
+                    }
+                    written = usb_serial_jtag_write_bytes(payload + offset, chunk, pdMS_TO_TICKS(1000));
+                    if (written != (int)chunk)
+                    {
+                        ESP_LOGW(TAG, "CDC write: incomplete write %d/%zu", written, chunk);
+                        break;
+                    }
+                    offset += chunk;
+                }
             }
             else
             {
-                ESP_LOGW(TAG, "CDC write: config response incomplete %d/%u", written, UART_CONFIG_PACKET_SIZE);
+                /* Discard non-DATA packets in non-extended mode */
+                ESP_LOGD(TAG, "CDC write: discarding packet type=0x%04X in non-extended mode", packet_type);
             }
-            taskYIELD();
-            continue;
-        }
-
-        /* Then check for UART->CDC data */
-        bytes_to_send = uart_gateway_receive_uart_queue(cdc_write_buffer, CDC_BUFFER_SIZE);
-
-        if (bytes_to_send <= 0)
-        {
-            continue;
-        }
-
-        ESP_LOGI(TAG, "CDC write: sending %d bytes to CDC", bytes_to_send);
-        led_signal_uart_activity();
-        int written = usb_serial_jtag_write_bytes(cdc_write_buffer, bytes_to_send, pdMS_TO_TICKS(1000));
-        if (written < bytes_to_send)
-        {
-            ESP_LOGW(TAG, "CDC write: incomplete write %d/%d", written, bytes_to_send);
         }
         else
         {
-            ESP_LOGI(TAG, "CDC write: sent %d bytes successfully", bytes_to_send);
+            /* Extended mode: send complete packet (header + payload) in fragments */
+            const uint8_t *out = (const uint8_t *)packet_header;
+            size_t out_len = packet_header->length;
+            size_t offset = 0;
+            while (offset < out_len)
+            {
+                size_t chunk = out_len - offset;
+                if (chunk > CDC_BUFFER_SIZE)
+                {
+                    chunk = CDC_BUFFER_SIZE;
+                }
+                written = usb_serial_jtag_write_bytes(out + offset, chunk, pdMS_TO_TICKS(1000));
+                if (written != (int)chunk)
+                {
+                    ESP_LOGW(TAG, "CDC write: incomplete write %d/%zu", written, chunk);
+                    break;
+                }
+                offset += chunk;
+            }
         }
+
+        /* Free the allocated packet */
+        free(packet_header);
         taskYIELD();
     }
 }
 
 void uart_gateway_start(void)
 {
-    /* Create config response queue */
-    if (config_response_queue == NULL)
-    {
-        config_response_queue = xQueueCreate(4, UART_CONFIG_PACKET_SIZE);
-        if (config_response_queue == NULL)
-        {
-            ESP_LOGE(TAG, "Failed to create config response queue");
-            return;
-        }
-        ESP_LOGI(TAG, "Config response queue created");
-    }
-
     /* Initialize USB CDC (enabled by default on ESP32-C3) */
     usb_serial_jtag_driver_config_t usb_cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     esp_err_t usb_res = usb_serial_jtag_driver_install(&usb_cfg);
@@ -1214,11 +1362,6 @@ void uart_gateway_start(void)
         return;
     }
     ESP_LOGI(TAG, "USB CDC initialized");
-
-    /* Register callback to persist config changes */
-    uart_gateway_register_callback(on_config_changed);
-
-    ESP_LOGI(TAG, "Creating relay tasks...");
 
     /* Create queue-based relay tasks */
     BaseType_t ret1 = xTaskCreatePinnedToCore(cdc_read_task, "cdc_read", 4096, NULL, 5, &cdc_read_task_handle, 0);
