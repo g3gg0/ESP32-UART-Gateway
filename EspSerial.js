@@ -8,6 +8,9 @@ class EspSerial {
         this.data_cbr = null; /* Raw UART-like bytes */
         this.config_cbr = null; /* Config packets */
         this.log_cbr = null; /* Parsed ESP log packets */
+        this.disconnect_cbr = null; /* Port disconnect callback */
+        this._disconnectHandler = null;
+        this._disconnecting = false;
 
         /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
         this.EXTMODE_MAGIC = new Uint8Array([
@@ -48,6 +51,10 @@ class EspSerial {
         this.log_cbr = callback;
     }
 
+    setDisconnectCallback(callback) {
+        this.disconnect_cbr = callback;
+    }
+
     async flushSerialData(durationMs) {
         if (!this.port) return;
         try {
@@ -85,6 +92,15 @@ class EspSerial {
         try {
             this.port = await navigator.serial.requestPort();
             await this.port.open({ baudRate: 921600 });
+
+            if (!this._disconnectHandler) {
+                this._disconnectHandler = (event) => {
+                    if (event && event.port === this.port) {
+                        this.handlePortDisconnect('system');
+                    }
+                };
+            }
+            navigator.serial.addEventListener('disconnect', this._disconnectHandler);
 
             /* Ensure RTS and DTR are low after opening */
             try {
@@ -144,6 +160,7 @@ class EspSerial {
 
     async disconnect() {
         try {
+            this._disconnecting = true;
             this.inputDone = true;
 
             /* Release reader lock if it exists */
@@ -167,10 +184,58 @@ class EspSerial {
                 }
                 this.port = null;
             }
+            if (this._disconnectHandler) {
+                navigator.serial.removeEventListener('disconnect', this._disconnectHandler);
+            }
+            this.notifyDisconnect({ reason: 'manual' });
             logToConsole('ESP Serial: Disconnected', 'info');
         } catch (err) {
             logToConsole(`ESP Serial: Disconnect error: ${err.message}`, 'info');
+        } finally {
+            this._disconnecting = false;
         }
+    }
+
+    notifyDisconnect(info) {
+        if (this.disconnect_cbr) {
+            try {
+                this.disconnect_cbr(info);
+            } catch (err) {
+                logToConsole(`Disconnect callback error: ${err.message}`, 'info');
+            }
+        }
+    }
+
+    async handlePortDisconnect(reason) {
+        if (this._disconnecting) return;
+        this._disconnecting = true;
+
+        this.inputDone = true;
+        if (this.reader) {
+            try {
+                await this.reader.cancel();
+            } catch (e) {
+                /* ignore */
+            }
+            this.reader = null;
+        }
+
+        if (this.port) {
+            try {
+                await this.port.close();
+            } catch (e) {
+                /* ignore */
+            }
+            this.port = null;
+        }
+
+        if (this._disconnectHandler) {
+            navigator.serial.removeEventListener('disconnect', this._disconnectHandler);
+        }
+
+        this.notifyDisconnect({ reason: reason || 'unknown' });
+        logToConsole('ESP Serial: Port disconnected', 'info');
+        this._disconnecting = false;
     }
 
     appendBuffer(a, b) {
@@ -352,6 +417,9 @@ class EspSerial {
             if (this.reader) {
                 this.reader.releaseLock();
                 this.reader = null;
+            }
+            if (!this.inputDone && this.port) {
+                await this.handlePortDisconnect('read_end');
             }
         }
     }
