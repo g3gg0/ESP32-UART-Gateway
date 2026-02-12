@@ -5,6 +5,7 @@ from pathlib import Path
 # Paths relative to project root
 PROJECT_ROOT = Path(__file__).resolve().parent
 HTML_PATH = PROJECT_ROOT / "flasher.html"
+CC3200_HTML_PATH = PROJECT_ROOT / "cc3200.html"
 
 # Binary sources and offsets
 BINARIES = [
@@ -15,6 +16,14 @@ BINARIES = [
 
 EMBED_START = "/* EMBEDDED_BINARIES_START */"
 EMBED_END = "/* EMBEDDED_BINARIES_END */"
+
+JS_EMBED_START = "/* EMBEDDED_JS_START:"  # suffix with filename */
+JS_EMBED_END = "/* EMBEDDED_JS_END:"      # suffix with filename */
+
+JS_FILES = [
+    PROJECT_ROOT / "SparseImage.js",
+    PROJECT_ROOT / "EspSerial.js",
+]
 
 
 def read_binaries():
@@ -36,6 +45,42 @@ def build_embed_block(encoded):
         lines.append(f'    "{name}": "{b64}"{comma}')
     lines += ["};", EMBED_END]
     return "\n        ".join(lines)  # keep indentation similar to surrounding code
+
+
+def read_js_files():
+    js_map = {}
+    for path in JS_FILES:
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing JS file: {path}")
+        js_map[path.name] = path.read_text(encoding="utf-8")
+    return js_map
+
+
+def build_js_block(filename, content):
+    start = f"{JS_EMBED_START}{filename} */"
+    end = f"{JS_EMBED_END}{filename} */"
+    return "\n".join([
+        start,
+        content,
+        end,
+    ])
+
+
+def replace_js_block(html, filename, content):
+    start = f"{JS_EMBED_START}{filename} */"
+    end = f"{JS_EMBED_END}{filename} */"
+    block = build_js_block(filename, content)
+
+    replaced = replace_block(html, start, end, block)
+    if replaced is not None:
+        return replaced
+
+    # Replace script src tag if present
+    src_tag = f'<script src="{filename}"></script>'
+    if src_tag in html:
+        return html.replace(src_tag, block)
+
+    return html
 
 
 
@@ -84,10 +129,21 @@ def main():
     content = inject_embedded(content, embed_block)
     HTML_PATH.write_text(content, encoding="utf-8")
 
+    # Embed JS into cc3200.html
+    js_files = read_js_files()
+    cc_content = CC3200_HTML_PATH.read_text(encoding="utf-8")
+    for name, js_content in js_files.items():
+        cc_content = replace_js_block(cc_content, name, js_content)
+    CC3200_HTML_PATH.write_text(cc_content, encoding="utf-8")
+
     sizes = {name: len(base64.b64decode(b64)) for name, (_off, b64) in encoded.items()}
     print("Embedded binaries injected into flasher.html:")
     for name, size in sizes.items():
         print(f"  {name}: {size} bytes")
+
+    print("Embedded JS injected into cc3200.html:")
+    for name in js_files.keys():
+        print(f"  {name}")
 
 
 if __name__ == "__main__":
