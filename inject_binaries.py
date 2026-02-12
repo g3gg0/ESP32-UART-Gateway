@@ -136,6 +136,13 @@ def main():
         cc_content = replace_js_block(cc_content, name, js_content)
     CC3200_HTML_PATH.write_text(cc_content, encoding="utf-8")
 
+    # Embed EspSerial.js into flasher.html
+    esp_serial_name = "EspSerial.js"
+    if esp_serial_name in js_files:
+        content = HTML_PATH.read_text(encoding="utf-8")
+        content = replace_js_block(content, esp_serial_name, js_files[esp_serial_name])
+        HTML_PATH.write_text(content, encoding="utf-8")
+
     sizes = {name: len(base64.b64decode(b64)) for name, (_off, b64) in encoded.items()}
     print("Embedded binaries injected into flasher.html:")
     for name, size in sizes.items():
@@ -144,6 +151,10 @@ def main():
     print("Embedded JS injected into cc3200.html:")
     for name in js_files.keys():
         print(f"  {name}")
+
+    if esp_serial_name in js_files:
+        print("Embedded JS injected into flasher.html:")
+        print(f"  {esp_serial_name}")
 
 
 if __name__ == "__main__":

@@ -113,7 +113,6 @@ static void send_current_config(void)
     }
 }
 
-
 void send_message(const char *fmt, ...)
 {
     if (fmt == NULL)
@@ -505,7 +504,7 @@ esp_err_t uart_gateway_configure(const uartgw_config_t *config)
     {
         return ESP_ERR_INVALID_STATE;
     }
-    
+
     reconfigure_gpio(config);
     reconfigure_uart(config);
 
@@ -1116,14 +1115,14 @@ static void cdc_read_task(void *pvParameters)
                                 if (new_config.baud_rate == 0)
                                 {
                                     send_message("CONFIG query received");
-                                    send_current_config();
                                 }
                                 else
                                 {
                                     send_message("CONFIG update");
                                     uart_gateway_configure(&new_config);
-                                    send_current_config();
+                                    uart_gateway_save_config();
                                 }
+                                send_current_config();
                             }
                             else
                             {
