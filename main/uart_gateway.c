@@ -46,17 +46,7 @@ static uint8_t cdc_read_buffer[CDC_BUFFER_SIZE];
 static uint8_t uart_write_buffer[UART_BUFFER_SIZE];
 static uint8_t uart_read_buffer[UART_BUFFER_SIZE];
 
-typedef struct
-{
-    uart_port_t uart_num;
-    uartgw_config_t current_config;
-    bool is_configured;
-    bool is_initializing;
-    uint8_t config_buffer[UART_CONFIG_PACKET_SIZE];
-    size_t config_buffer_pos;
-    StreamBufferHandle_t cdc_to_uart_buffer;
-    QueueHandle_t uart_to_cdc_buffer;
-} uart_gateway_ctx_t;
+uartgw_config_t uart_current_config;
 
 static uart_gateway_ctx_t gateway_ctx = {
     .uart_num = UART_NUM_0,
@@ -210,6 +200,59 @@ static bool parse_config_packet(const uint8_t *packet_data, size_t bytes_read, u
         if (tx_gpio == rx_gpio)
         {
             send_message("TX and RX pins cannot be the same");
+            return false;
+        }
+
+        /* Check TX doesn't conflict with other GPIOs */
+        if (reset_gpio != 0xFF && tx_gpio == reset_gpio)
+        {
+            send_message("TX and RESET pins cannot be the same");
+            return false;
+        }
+        if (control_gpio != 0xFF && tx_gpio == control_gpio)
+        {
+            send_message("TX and CONTROL pins cannot be the same");
+            return false;
+        }
+        if (led_gpio != 0xFF && tx_gpio == led_gpio)
+        {
+            send_message("TX and LED pins cannot be the same");
+            return false;
+        }
+
+        /* Check RX doesn't conflict with other GPIOs */
+        if (reset_gpio != 0xFF && rx_gpio == reset_gpio)
+        {
+            send_message("RX and RESET pins cannot be the same");
+            return false;
+        }
+        if (control_gpio != 0xFF && rx_gpio == control_gpio)
+        {
+            send_message("RX and CONTROL pins cannot be the same");
+            return false;
+        }
+        if (led_gpio != 0xFF && rx_gpio == led_gpio)
+        {
+            send_message("RX and LED pins cannot be the same");
+            return false;
+        }
+
+        /* Check RESET doesn't conflict with CONTROL and LED */
+        if (reset_gpio != 0xFF && control_gpio != 0xFF && reset_gpio == control_gpio)
+        {
+            send_message("RESET and CONTROL pins cannot be the same");
+            return false;
+        }
+        if (reset_gpio != 0xFF && led_gpio != 0xFF && reset_gpio == led_gpio)
+        {
+            send_message("RESET and LED pins cannot be the same");
+            return false;
+        }
+
+        /* Check CONTROL doesn't conflict with LED */
+        if (control_gpio != 0xFF && led_gpio != 0xFF && control_gpio == led_gpio)
+        {
+            send_message("CONTROL and LED pins cannot be the same");
             return false;
         }
     }
@@ -479,6 +522,7 @@ void uart_gateway_init(const uartgw_config_t *config)
         }
     }
 
+    uart_current_config = *config;
     ESP_LOGI(TAG, "Initializing GPIOs...");
     reconfigure_gpio(config);
     ESP_LOGI(TAG, "Initializing UART gateway...");
@@ -505,8 +549,10 @@ esp_err_t uart_gateway_configure(const uartgw_config_t *config)
         return ESP_ERR_INVALID_STATE;
     }
 
+    led_stop();
     reconfigure_gpio(config);
     reconfigure_uart(config);
+    led_init(config);
 
     /* Initialize all unused GPIO pins to GND with strong drive */
     init_unused_gpios_to_gnd(config->tx_gpio, config->rx_gpio, config->reset_gpio, config->control_gpio, config->led_gpio);
@@ -1123,10 +1169,6 @@ static void cdc_read_task(void *pvParameters)
                                     uart_gateway_save_config();
                                 }
                                 send_current_config();
-                            }
-                            else
-                            {
-                                send_message("Failed to parse CONFIG packet");
                             }
                             break;
 

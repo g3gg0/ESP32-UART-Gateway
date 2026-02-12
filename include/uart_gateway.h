@@ -74,6 +74,18 @@ typedef struct
     uint8_t extended_mode;
 } uartgw_config_t;
 
+typedef struct
+{
+    uart_port_t uart_num;
+    uartgw_config_t current_config;
+    bool is_configured;
+    bool is_initializing;
+    uint8_t config_buffer[UART_CONFIG_PACKET_SIZE];
+    size_t config_buffer_pos;
+    StreamBufferHandle_t cdc_to_uart_buffer;
+    QueueHandle_t uart_to_cdc_buffer;
+} uart_gateway_ctx_t;
+
 /* Callback function type for configuration change notifications */
 typedef void (*uart_config_callback_t)(const uartgw_config_t *config);
 

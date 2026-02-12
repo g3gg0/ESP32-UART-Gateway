@@ -14,16 +14,6 @@
 
 #define TAG "ESP32-UART"
 
-uartgw_config_t config = {
-    .baud_rate = UART_DEFAULT_BAUD,
-    .tx_gpio = UART_DEFAULT_TX_GPIO,
-    .rx_gpio = UART_DEFAULT_RX_GPIO,
-    .reset_gpio = UART_DEFAULT_RESET_GPIO,
-    .control_gpio = UART_DEFAULT_CONTROL_GPIO,
-    .led_gpio = UART_DEFAULT_LED_GPIO,
-    .extended_mode = 0,
-};
-
 static void initialize_nvs(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -37,6 +27,16 @@ static void initialize_nvs(void)
 
 void app_main()
 {
+    uartgw_config_t saved_config = {
+        .baud_rate = UART_DEFAULT_BAUD,
+        .tx_gpio = UART_DEFAULT_TX_GPIO,
+        .rx_gpio = UART_DEFAULT_RX_GPIO,
+        .reset_gpio = UART_DEFAULT_RESET_GPIO,
+        .control_gpio = UART_DEFAULT_CONTROL_GPIO,
+        .led_gpio = UART_DEFAULT_LED_GPIO,
+        .extended_mode = 0,
+    };
+
     ESP_LOGI(TAG, "Starting UART Gateway");
 
     /* Initialize NVS */
@@ -46,7 +46,7 @@ void app_main()
     uart_gateway_start();
 
     /* Try to load saved configuration from NVS */
-    esp_err_t load_result = uart_gateway_load_config(&config);
+    esp_err_t load_result = uart_gateway_load_config(&saved_config);
     if (load_result == ESP_OK)
     {
         ESP_LOGI(TAG, "Loaded persisted UART configuration from NVS");
@@ -57,10 +57,10 @@ void app_main()
     }
 
     /* Initialize UART gateway (creates stream buffers) */
-    uart_gateway_init(&config);
+    uart_gateway_init(&saved_config);
 
     /* Initialize LED on configured GPIO */
-    led_init();
+    led_init(&saved_config);
 
     /* Give USB CDC time to stabilize before tasks start processing */
     ESP_LOGI(TAG, "Waiting for USB CDC to stabilize...");
