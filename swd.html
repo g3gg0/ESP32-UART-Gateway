@@ -1,0 +1,3362 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SWD Debug Console</title>
+    
+    <script src="EspSerial.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(circle at 20% 20%, #1f2937 0%, #0b1220 40%, #070b15 75%);
+            min-height: 100vh;
+            padding: 24px;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            color: #e5e7eb;
+        }
+
+        .container {
+            max-width: 1000px;
+            width: 100%;
+            background: linear-gradient(180deg, rgba(31, 41, 55, 0.9), rgba(15, 23, 42, 0.95));
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+            overflow: visible;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .header {
+            background: linear-gradient(90deg, #1e3a8a, #0f172a);
+            padding: 20px;
+            border-bottom: 2px solid #3b82f6;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 15px;
+        }
+
+        .connection-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-primary,
+        .btn-secondary {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn-primary:disabled {
+            background: #6b7280;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #4b5563;
+        }
+
+        .btn-secondary:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .connection-status {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            background: #ef4444;
+            color: white;
+        }
+
+        .connection-status.connected {
+            background: #10b981;
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: visible;
+            padding: 20px;
+            gap: 15px;
+        }
+
+        .console-display {
+            flex: 0 0 auto;
+            height: 420px;
+            height: 25lh;
+            background: #0f172a;
+            border: 1px solid #374151;
+            border-radius: 6px;
+            padding: 12px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #a3e635;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+
+        .console-display::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .console-display::-webkit-scrollbar-track {
+            background: #1f2937;
+            border-radius: 4px;
+        }
+
+        .console-display::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+
+        .console-display::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+
+        .controls-section {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+            padding: 15px;
+            background: rgba(55, 65, 81, 0.3);
+            border-radius: 6px;
+        }
+
+        .ap-tabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .ap-tab {
+            padding: 6px 10px;
+            border: 1px solid #374151;
+            background: #0f172a;
+            color: #e5e7eb;
+            border-radius: 999px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .ap-tab.active {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+        }
+
+        .ap-panel {
+            background:#0f172a;
+            border: 1px solid #374151;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #e5e7eb;
+            white-space: pre-wrap;
+            overflow: visible;
+            max-height: none;
+            min-height: 260px;
+        }
+
+        .ap-panel .row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .ap-subtabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            margin-bottom: 8px;
+        }
+
+        .ap-subtab {
+            padding: 6px 10px;
+            border: 1px solid #374151;
+            background: #0b1220;
+            color: #e5e7eb;
+            border-radius: 999px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .ap-subtab.active {
+            border-color: #a3e635;
+            box-shadow: 0 0 0 2px rgba(163, 230, 53, 0.15);
+        }
+
+        .ap-subtab:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .ap-subpanel {
+            margin-top: 6px;
+        }
+
+        .ap-panel input {
+            padding: 8px;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            background: #1f2937;
+            color: #e5e7eb;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .ap-panel button {
+            padding: 8px 12px;
+            background: #6b7280;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .ap-panel button:hover {
+            background: #4b5563;
+        }
+
+        .hex-editor {
+            margin-top: 10px;
+            border: 1px solid #374151;
+            border-radius: 6px;
+            background: #0b1220;
+            overflow: hidden;
+        }
+
+        .hex-editor .hex-toolbar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            padding: 8px 10px;
+            border-bottom: 1px solid #374151;
+            background: rgba(31, 41, 55, 0.6);
+            color: #e5e7eb;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 12px;
+        }
+
+        .hex-editor .hex-toolbar label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: #9ca3af;
+            font-weight: 600;
+        }
+
+        .hex-editor .hex-toolbar select {
+            padding: 6px 8px;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            background: #111827;
+            color: #e5e7eb;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .hex-editor .hex-view {
+            max-height: none;
+            min-height: 260px;
+            overflow: auto;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #e5e7eb;
+            line-height: 1.6;
+            user-select: none;
+            resize: vertical;
+        }
+
+        .hex-editor .hex-row {
+            display: grid;
+            grid-template-columns: 90px 1fr 180px;
+            gap: 12px;
+            align-items: start;
+            white-space: pre;
+        }
+
+        .hex-editor .hex-off {
+            color: #9ca3af;
+        }
+
+        .hex-editor .hex-bytes {
+            color: #e5e7eb;
+        }
+
+        .hex-editor .hex-ascii {
+            color: #d1d5db;
+        }
+
+        .hex-editor .byte {
+            display: inline-block;
+            width: 22px;
+            text-align: center;
+            padding: 1px 0;
+            border-radius: 4px;
+            cursor: default;
+        }
+
+        .hex-editor .byte:hover {
+            background: rgba(59, 130, 246, 0.15);
+        }
+
+        .hex-editor .byte.sel {
+            background: rgba(96, 165, 250, 0.22);
+            outline: 1px solid rgba(96, 165, 250, 0.45);
+        }
+
+        .hex-editor .ascii {
+            display: inline-block;
+            width: 11px;
+            text-align: center;
+            padding: 1px 0;
+            border-radius: 4px;
+        }
+
+        .hex-editor .ascii:hover {
+            background: rgba(16, 185, 129, 0.12);
+        }
+
+        .hex-editor .ascii.sel {
+            background: rgba(16, 185, 129, 0.18);
+            outline: 1px solid rgba(16, 185, 129, 0.35);
+        }
+
+        .hex-editor .hex-input-overlay {
+            position: fixed;
+            z-index: 9999;
+            padding: 0;
+            margin: 0;
+            border: none;
+        }
+
+        .hex-editor .hex-input-overlay input {
+            padding: 6px 8px;
+            border: 1px solid #60a5fa;
+            border-radius: 6px;
+            background: #111827;
+            color: #e5e7eb;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            outline: none;
+            width: 110px;
+        }
+
+        .input-section {
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-section input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            background: #1f2937;
+            color: #e5e7eb;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .input-section input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .input-section button {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .input-section button:hover {
+            background: #2563eb;
+        }
+
+        .input-section button:active {
+            transform: scale(0.98);
+        }
+
+        .footer {
+            padding: 10px 20px;
+            border-top: 1px solid #374151;
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SWD Debug Console</h1>
+            <div class="connection-controls">
+                <button class="btn-primary" id="connectBtn" onclick="connectDevice()">Connect</button>
+                <button class="btn-secondary" id="disconnectBtn" onclick="disconnectDevice()"
+                    disabled>Disconnect</button>
+                <button class="btn-secondary" id="clearBtn" onclick="clearConsole()">Clear</button>
+                <div class="connection-status" id="statusIndicator">Disconnected</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="controls-section" id="deviceInteraction" style="padding: 12px; display: none;">
+                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+
+                    <div style="display: flex; flex-direction: column; gap: 15px;">
+                        <div>
+                            <div style="margin-bottom: 8px; color: #a3e635; font-weight: 600;">Candidate GPIOs (SWD+SWC):</div>
+                            <div id="ioGpioCheckboxes" style="display: flex; gap: 12px; flex-wrap: wrap;"></div>
+                        </div>
+                        <button id="btnRunSWDTest" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700; align-self: flex-start;">Detect device</button>
+
+                        <div style="display: grid; grid-template-columns: 220px 1fr; gap: 10px; align-items: center; margin-top: 6px;">
+                            <div style="color: #9ca3af; font-weight: 600;">Detected Pins</div>
+                            <div id="detectedPins" style="font-family: 'Courier New', monospace; color: #e5e7eb;">-</div>
+                            <div style="color: #9ca3af; font-weight: 600;">DPIDR / TARGETID</div>
+                            <div id="detectedIds" style="font-family: 'Courier New', monospace; color: #e5e7eb;">-</div>
+                        </div>
+
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                            <button id="btnScanAps" class="btn-secondary" disabled>Scan APs</button>
+                            <button id="btnDpDebug" class="btn-secondary" disabled>DP Debug</button>
+                            <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
+                                Max APs
+                                <input id="apScanMaxInput" value="4" style="width: 70px; padding: 8px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;" />
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
+                                <input id="chkFullApScan" type="checkbox" />
+                                Full scan (slow)
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
+                                <input id="chkVerboseSwd" type="checkbox" />
+                                Verbose SWD logs
+                            </label>
+                        </div>
+
+                        <div style="margin-top: 8px;">
+                            <div style="margin-bottom: 8px; color: #a3e635; font-weight: 600;">AP Scan Results</div>
+                            <div id="apTabs" class="ap-tabs"></div>
+                            <div id="apPanel" class="ap-panel">(not scanned)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="console-display" id="consoleDisplay"></div>
+        </div>
+
+        <div class="footer">
+            Single Wire Debugging utility - Detect SWD target and explore APs
+        </div>
+    </div>
+
+    <script>
+
+        /* ============= Global State and UI Functions ============= */
+        let espSerial = null;
+        let swd = null;
+        let scanInProgress = false;
+
+        let detectLoopActive = false;
+        let detectLoopToken = 0;
+
+        let tadaaAudio = null;
+        let tadaaAudioPrimed = false;
+        let tadaaAudioUrl = null;
+
+        const MAX_CONSOLE_LINES = 500;
+        const consoleLineBuffer = [];
+
+        /* audio_embed_start */
+        if (window.TADAA_MP3_B64 === undefined) window.TADAA_MP3_B64 = null;
+        /* audio_embed_stop */
+
+        let scannedAps = [];
+        let activeAp = null;
+
+        let lastMemAddrText = '0xE000ED00';
+        let lastMemWordsText = '16';
+
+        const apHexEditors = new Map();
+        const apSubTabState = new Map();
+
+        const coresightTreeCache = new Map();
+
+        /* Initialize ESP Serial with callbacks */
+        function initializeEspSerial() {
+            espSerial = new EspSerial();
+
+            /* Set up log callback */
+            espSerial.setLogCallback((packet) => {
+                logToConsole(`${packet.text}`, 'log');
+            });
+
+            /* Optional SWD callback for unsolicited packets (e.g. legacy seq=0) */
+            espSerial.setSwdCallback((packet) => {
+                const op = packet.req_op !== undefined ? packet.req_op : packet.op;
+                logToConsole(`SWD unsolicited: op=0x${op.toString(16)} seq=${packet.seq} status=${packet.status} ack=${packet.ack}`, 'info');
+            });
+
+            return espSerial;
+        }
+
+        /* ============= SWD Host Logic ============= */
+
+        const SWD_UART_MAGIC = 0xCAFE;
+        const SWD_UART_OP_DETECT_PINS = 0x01;
+        const SWD_UART_OP_DEINIT = 0x02;
+        const SWD_UART_OP_TRANSFER = 0x03;
+        const SWD_UART_OP_AP_READ = 0x10;
+        const SWD_UART_OP_AP_READ_SINGLE = 0x11;
+        const SWD_UART_OP_AP_WRITE = 0x12;
+
+        const SWD_UART_STATUS_OK = 0x00;
+        const SWD_UART_FLAG_VERBOSE_LOG = 0x01;
+
+        /* DP register address bits A[3:2] (a23 param for SWD_UART_OP_TRANSFER) */
+        const DP_A23_ABORT = 0x00;
+        const DP_A23_CTRLSTAT = 0x01;
+        const DP_A23_SELECT = 0x02;
+        const DP_A23_RDBUFF = 0x03;
+
+        /* DP CTRL/STAT power-up bits */
+        const CDBGPWRUPREQ = 0x10000000;
+        const CDBGPWRUPACK = 0x20000000;
+        const CSYSPWRUPREQ = 0x40000000;
+        const CSYSPWRUPACK = 0x80000000;
+
+        const AP_IDR = 0xFC;
+        const AP_BASE = 0xF8;
+        const MEMAP_CSW = 0x00;
+        const MEMAP_TAR = 0x04;
+        const MEMAP_DRW = 0x0C;
+
+        /* Cortex-M System Control Space (SCS) / CoreDebug registers */
+        const SCS_CPUID = 0xE000ED00;
+        const SCS_CPACR = 0xE000ED88;
+        const SCS_DHCSR = 0xE000EDF0;
+        const SCS_DCRSR = 0xE000EDF4;
+        const SCS_DCRDR = 0xE000EDF8;
+
+        const SCS_DHCSR_S_HALT = (1 << 17) >>> 0;
+        const SCS_DHCSR_S_REGRDY = (1 << 16) >>> 0;
+        const SCS_DHCSR_C_MASKINTS = (1 << 3) >>> 0;
+        const SCS_DHCSR_C_STEP = (1 << 2) >>> 0;
+        const SCS_DHCSR_C_HALT = (1 << 1) >>> 0;
+        const SCS_DHCSR_C_DEBUGEN = (1 << 0) >>> 0;
+        const SCS_DHCSR_KEY = 0xA05F0000 >>> 0;
+
+        const SCS_DCRSR_RD = 0x00000000;
+        const SCS_DCRSR_WR = 0x00010000;
+
+        /* CoreSight component ID offsets */
+        const CS_CIDR_OFFS = [0xFF0, 0xFF4, 0xFF8, 0xFFC];
+        const CS_PIDR_OFFS = [0xFE0, 0xFE4, 0xFE8, 0xFEC, 0xFD0, 0xFD4, 0xFD8, 0xFDC];
+
+        const CS_DEVARCH = 0xFBC;
+        const CS_DEVTYPE = 0xFCC;
+
+        const CIDR_CLASS_ROMTABLE = 0x01;
+        const CIDR_CLASS_CORESIGHT = 0x09;
+
+        const ARM_ID = 0x23B;
+
+        function archId(architect, archid) {
+            return (((architect & 0x7FF) << 21) | (archid & 0xFFFF)) >>> 0;
+        }
+
+        const CORESIGHT_DEVARCH_DESC = new Map([
+            /* Ported from orig/adi.c: class0x9_devarch[] (ARM IHI0029E) */
+            [archId(ARM_ID, 0x0A00), 'RAS architecture'],
+            [archId(ARM_ID, 0x1A01), 'Instrumentation Trace Macrocell (ITM) architecture'],
+            [archId(ARM_ID, 0x1A02), 'DWT architecture'],
+            [archId(ARM_ID, 0x1A03), 'Flash Patch and Breakpoint unit (FPB) architecture'],
+            [archId(ARM_ID, 0x2A04), 'Processor debug architecture (ARMv8-M)'],
+            [archId(ARM_ID, 0x6A05), 'Processor debug architecture (ARMv8-R)'],
+            [archId(ARM_ID, 0x0A10), 'PC sample-based profiling'],
+            [archId(ARM_ID, 0x4A13), 'Embedded Trace Macrocell (ETM) architecture'],
+            [archId(ARM_ID, 0x1A14), 'Cross Trigger Interface (CTI) architecture'],
+            [archId(ARM_ID, 0x6A15), 'Processor debug architecture (v8.0-A)'],
+            [archId(ARM_ID, 0x7A15), 'Processor debug architecture (v8.1-A)'],
+            [archId(ARM_ID, 0x8A15), 'Processor debug architecture (v8.2-A)'],
+            [archId(ARM_ID, 0x2A16), 'Processor Performance Monitor (PMU) architecture'],
+            [archId(ARM_ID, 0x0A17), 'Memory Access Port v2 architecture'],
+            [archId(ARM_ID, 0x0A27), 'JTAG Access Port v2 architecture'],
+            [archId(ARM_ID, 0x0A31), 'Basic trace router'],
+            [archId(ARM_ID, 0x0A37), 'Power requestor'],
+            [archId(ARM_ID, 0x0A47), 'Unknown Access Port v2 architecture'],
+            [archId(ARM_ID, 0x0A50), 'HSSTP architecture'],
+            [archId(ARM_ID, 0x0A63), 'System Trace Macrocell (STM) architecture'],
+            [archId(ARM_ID, 0x0A75), 'CoreSight ELA architecture'],
+            [archId(ARM_ID, 0x0AF7), 'CoreSight ROM architecture'],
+        ]);
+
+        function coresightDevarchDesc(devarch) {
+            const v = devarch >>> 0;
+            if ((v & (1 << 20)) === 0) return 'not present';
+            const id = (v & (0xFFE00000 | 0x0000FFFF)) >>> 0;
+            return CORESIGHT_DEVARCH_DESC.get(id) || 'unknown';
+        }
+
+        const ADI_PARTNUM = new Map([
+            /* Ported from orig/adi.c: dap_part_nums[] */
+            ['23b:000', { type: 'Cortex-M3 SCS', full: '(System Control Space)' }],
+            ['23b:001', { type: 'Cortex-M3 ITM', full: '(Instrumentation Trace Module)' }],
+            ['23b:002', { type: 'Cortex-M3 DWT', full: '(Data Watchpoint and Trace)' }],
+            ['23b:003', { type: 'Cortex-M3 FPB', full: '(Flash Patch and Breakpoint)' }],
+            ['23b:008', { type: 'Cortex-M0 SCS', full: '(System Control Space)' }],
+            ['23b:00a', { type: 'Cortex-M0 DWT', full: '(Data Watchpoint and Trace)' }],
+            ['23b:00b', { type: 'Cortex-M0 BPU', full: '(Breakpoint Unit)' }],
+            ['23b:00c', { type: 'Cortex-M4 SCS', full: '(System Control Space)' }],
+            ['23b:00d', { type: 'CoreSight ETM11', full: '(Embedded Trace)' }],
+            ['23b:00e', { type: 'Cortex-M7 FPB', full: '(Flash Patch and Breakpoint)' }],
+            ['23b:193', { type: 'SoC-600 TSGEN', full: '(Timestamp Generator)' }],
+            ['23b:470', { type: 'Cortex-M1 ROM', full: '(ROM Table)' }],
+            ['23b:471', { type: 'Cortex-M0 ROM', full: '(ROM Table)' }],
+            ['23b:490', { type: 'Cortex-A15 GIC', full: '(Generic Interrupt Controller)' }],
+            ['23b:492', { type: 'Cortex-R52 GICD', full: '(Distributor)' }],
+            ['23b:493', { type: 'Cortex-R52 GICR', full: '(Redistributor)' }],
+            ['23b:4a1', { type: 'Cortex-A53 ROM', full: '(v8 Memory Map ROM Table)' }],
+            ['23b:4a2', { type: 'Cortex-A57 ROM', full: '(ROM Table)' }],
+            ['23b:4a3', { type: 'Cortex-A53 ROM', full: '(v7 Memory Map ROM Table)' }],
+            ['23b:4a4', { type: 'Cortex-A72 ROM', full: '(ROM Table)' }],
+            ['23b:4a9', { type: 'Cortex-A9 ROM', full: '(ROM Table)' }],
+            ['23b:4aa', { type: 'Cortex-A35 ROM', full: '(v8 Memory Map ROM Table)' }],
+            ['23b:4af', { type: 'Cortex-A15 ROM', full: '(ROM Table)' }],
+            ['23b:4b5', { type: 'Cortex-R5 ROM', full: '(ROM Table)' }],
+            ['23b:4b8', { type: 'Cortex-R52 ROM', full: '(ROM Table)' }],
+            ['23b:4c0', { type: 'Cortex-M0+ ROM', full: '(ROM Table)' }],
+            ['23b:4c3', { type: 'Cortex-M3 ROM', full: '(ROM Table)' }],
+            ['23b:4c4', { type: 'Cortex-M4 ROM', full: '(ROM Table)' }],
+            ['23b:4c7', { type: 'Cortex-M7 PPB ROM', full: '(Private Peripheral Bus ROM Table)' }],
+            ['23b:4c8', { type: 'Cortex-M7 ROM', full: '(ROM Table)' }],
+            ['23b:4e0', { type: 'Cortex-A35 ROM', full: '(v7 Memory Map ROM Table)' }],
+            ['23b:4e4', { type: 'Cortex-A76 ROM', full: '(ROM Table)' }],
+            ['23b:906', { type: 'CoreSight CTI', full: '(Cross Trigger)' }],
+            ['23b:907', { type: 'CoreSight ETB', full: '(Trace Buffer)' }],
+            ['23b:908', { type: 'CoreSight CSTF', full: '(Trace Funnel)' }],
+            ['23b:909', { type: 'CoreSight ATBR', full: '(Advanced Trace Bus Replicator)' }],
+            ['23b:910', { type: 'CoreSight ETM9', full: '(Embedded Trace)' }],
+            ['23b:912', { type: 'CoreSight TPIU', full: '(Trace Port Interface Unit)' }],
+            ['23b:913', { type: 'CoreSight ITM', full: '(Instrumentation Trace Macrocell)' }],
+            ['23b:914', { type: 'CoreSight SWO', full: '(Single Wire Output)' }],
+            ['23b:917', { type: 'CoreSight HTM', full: '(AHB Trace Macrocell)' }],
+            ['23b:920', { type: 'CoreSight ETM11', full: '(Embedded Trace)' }],
+            ['23b:921', { type: 'Cortex-A8 ETM', full: '(Embedded Trace)' }],
+            ['23b:922', { type: 'Cortex-A8 CTI', full: '(Cross Trigger)' }],
+            ['23b:923', { type: 'Cortex-M3 TPIU', full: '(Trace Port Interface Unit)' }],
+            ['23b:924', { type: 'Cortex-M3 ETM', full: '(Embedded Trace)' }],
+            ['23b:925', { type: 'Cortex-M4 ETM', full: '(Embedded Trace)' }],
+            ['23b:930', { type: 'Cortex-R4 ETM', full: '(Embedded Trace)' }],
+            ['23b:931', { type: 'Cortex-R5 ETM', full: '(Embedded Trace)' }],
+            ['23b:932', { type: 'CoreSight MTB-M0+', full: '(Micro Trace Buffer)' }],
+            ['23b:941', { type: 'CoreSight TPIU-Lite', full: '(Trace Port Interface Unit)' }],
+            ['23b:950', { type: 'Cortex-A9 PTM', full: '(Program Trace Macrocell)' }],
+            ['23b:955', { type: 'Cortex-A5 ETM', full: '(Embedded Trace)' }],
+            ['23b:95a', { type: 'Cortex-A72 ETM', full: '(Embedded Trace)' }],
+            ['23b:95b', { type: 'Cortex-A17 PTM', full: '(Program Trace Macrocell)' }],
+            ['23b:95d', { type: 'Cortex-A53 ETM', full: '(Embedded Trace)' }],
+            ['23b:95e', { type: 'Cortex-A57 ETM', full: '(Embedded Trace)' }],
+            ['23b:95f', { type: 'Cortex-A15 PTM', full: '(Program Trace Macrocell)' }],
+            ['23b:961', { type: 'CoreSight TMC', full: '(Trace Memory Controller)' }],
+            ['23b:962', { type: 'CoreSight STM', full: '(System Trace Macrocell)' }],
+            ['23b:975', { type: 'Cortex-M7 ETM', full: '(Embedded Trace)' }],
+            ['23b:9a0', { type: 'CoreSight PMU', full: '(Performance Monitoring Unit)' }],
+            ['23b:9a1', { type: 'Cortex-M4 TPIU', full: '(Trace Port Interface Unit)' }],
+            ['23b:9a4', { type: 'CoreSight GPR', full: '(Granular Power Requester)' }],
+            ['23b:9a5', { type: 'Cortex-A5 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9a7', { type: 'Cortex-A7 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9a8', { type: 'Cortex-A53 CTI', full: '(Cross Trigger)' }],
+            ['23b:9a9', { type: 'Cortex-M7 TPIU', full: '(Trace Port Interface Unit)' }],
+            ['23b:9ae', { type: 'Cortex-A17 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9af', { type: 'Cortex-A15 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9b6', { type: 'Cortex-R52 PMU/CTI/ETM', full: '(Performance Monitor Unit/Cross Trigger/ETM)' }],
+            ['23b:9b7', { type: 'Cortex-R7 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9d3', { type: 'Cortex-A53 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9d7', { type: 'Cortex-A57 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9d8', { type: 'Cortex-A72 PMU', full: '(Performance Monitor Unit)' }],
+            ['23b:9da', { type: 'Cortex-A35 PMU/CTI/ETM', full: '(Performance Monitor Unit/Cross Trigger/ETM)' }],
+            ['23b:9e2', { type: 'SoC-600 APB-AP', full: '(APB4 Memory Access Port)' }],
+            ['23b:9e3', { type: 'SoC-600 AHB-AP', full: '(AHB5 Memory Access Port)' }],
+            ['23b:9e4', { type: 'SoC-600 AXI-AP', full: '(AXI Memory Access Port)' }],
+            ['23b:9e5', { type: 'SoC-600 APv1 Adapter', full: '(Access Port v1 Adapter)' }],
+            ['23b:9e6', { type: 'SoC-600 JTAG-AP', full: '(JTAG Access Port)' }],
+            ['23b:9e7', { type: 'SoC-600 TPIU', full: '(Trace Port Interface Unit)' }],
+            ['23b:9e8', { type: 'SoC-600 TMC ETR/ETS', full: '(Embedded Trace Router/Streamer)' }],
+            ['23b:9e9', { type: 'SoC-600 TMC ETB', full: '(Embedded Trace Buffer)' }],
+            ['23b:9ea', { type: 'SoC-600 TMC ETF', full: '(Embedded Trace FIFO)' }],
+            ['23b:9eb', { type: 'SoC-600 ATB Funnel', full: '(Trace Funnel)' }],
+            ['23b:9ec', { type: 'SoC-600 ATB Replicator', full: '(Trace Replicator)' }],
+            ['23b:9ed', { type: 'SoC-600 CTI', full: '(Cross Trigger)' }],
+            ['23b:9ee', { type: 'SoC-600 CATU', full: '(Address Translation Unit)' }],
+            ['23b:c05', { type: 'Cortex-A5 Debug', full: '(Debug Unit)' }],
+            ['23b:c07', { type: 'Cortex-A7 Debug', full: '(Debug Unit)' }],
+            ['23b:c08', { type: 'Cortex-A8 Debug', full: '(Debug Unit)' }],
+            ['23b:c09', { type: 'Cortex-A9 Debug', full: '(Debug Unit)' }],
+            ['23b:c0e', { type: 'Cortex-A17 Debug', full: '(Debug Unit)' }],
+            ['23b:c0f', { type: 'Cortex-A15 Debug', full: '(Debug Unit)' }],
+            ['23b:c14', { type: 'Cortex-R4 Debug', full: '(Debug Unit)' }],
+            ['23b:c15', { type: 'Cortex-R5 Debug', full: '(Debug Unit)' }],
+            ['23b:c17', { type: 'Cortex-R7 Debug', full: '(Debug Unit)' }],
+            ['23b:d03', { type: 'Cortex-A53 Debug', full: '(Debug Unit)' }],
+            ['23b:d04', { type: 'Cortex-A35 Debug', full: '(Debug Unit)' }],
+            ['23b:d07', { type: 'Cortex-A57 Debug', full: '(Debug Unit)' }],
+            ['23b:d08', { type: 'Cortex-A72 Debug', full: '(Debug Unit)' }],
+            ['23b:d0b', { type: 'Cortex-A76 Debug', full: '(Debug Unit)' }],
+            ['23b:d0c', { type: 'Neoverse N1', full: '(Debug Unit)' }],
+            ['23b:d13', { type: 'Cortex-R52 Debug', full: '(Debug Unit)' }],
+            ['23b:d49', { type: 'Neoverse N2', full: '(Debug Unit)' }],
+            ['17:120', { type: 'TI SDTI', full: '(System Debug Trace Interface)' }],
+            ['17:343', { type: 'TI DAPCTL', full: '' }],
+            ['17:9af', { type: 'MSP432 ROM', full: '(ROM Table)' }],
+            ['1f:cd0', { type: 'Atmel CPU with DSU', full: '(CPU)' }],
+            ['41:1db', { type: 'XMC4500 ROM', full: '(ROM Table)' }],
+            ['41:1df', { type: 'XMC4700/4800 ROM', full: '(ROM Table)' }],
+            ['41:1ed', { type: 'XMC1000 ROM', full: '(ROM Table)' }],
+            ['65:000', { type: 'SHARC+/Blackfin+', full: '' }],
+            ['70:440', { type: 'Qualcomm QDSS Component v1', full: '(Qualcomm Designed CoreSight Component v1)' }],
+            ['bf:100', { type: 'Brahma-B53 Debug', full: '(Debug Unit)' }],
+            ['bf:9d3', { type: 'Brahma-B53 PMU', full: '(Performance Monitor Unit)' }],
+            ['bf:4a1', { type: 'Brahma-B53 ROM', full: '(ROM Table)' }],
+            ['bf:721', { type: 'Brahma-B53 ROM', full: '(ROM Table)' }],
+            ['1eb:181', { type: 'Tegra 186 ROM', full: '(ROM Table)' }],
+            ['1eb:202', { type: 'Denver ETM', full: '(Denver Embedded Trace)' }],
+            ['1eb:211', { type: 'Tegra 210 ROM', full: '(ROM Table)' }],
+            ['1eb:302', { type: 'Denver Debug', full: '(Debug Unit)' }],
+            ['1eb:402', { type: 'Denver PMU', full: '(Performance Monitor Unit)' }],
+            ['20:410', { type: 'STM32F10 (med)', full: '(ROM Table)' }],
+            ['20:411', { type: 'STM32F2', full: '(ROM Table)' }],
+            ['20:412', { type: 'STM32F10 (low)', full: '(ROM Table)' }],
+            ['20:413', { type: 'STM32F40/41', full: '(ROM Table)' }],
+            ['20:414', { type: 'STM32F10 (high)', full: '(ROM Table)' }],
+            ['20:415', { type: 'STM32L47/48', full: '(ROM Table)' }],
+            ['20:416', { type: 'STM32L1xxx6/8/B', full: '(ROM Table)' }],
+            ['20:417', { type: 'STM32L05/06', full: '(ROM Table)' }],
+            ['20:418', { type: 'STM32F105xx/107', full: '(ROM Table)' }],
+            ['20:419', { type: 'STM32F42/43', full: '(ROM Table)' }],
+            ['20:420', { type: 'STM32F10 (med)', full: '(ROM Table)' }],
+            ['20:421', { type: 'STM32F446xx', full: '(ROM Table)' }],
+            ['20:422', { type: 'STM32FF358/02/03', full: '(ROM Table)' }],
+            ['20:423', { type: 'STM32F401xB/C', full: '(ROM Table)' }],
+            ['20:425', { type: 'STM32L031/41', full: '(ROM Table)' }],
+            ['20:427', { type: 'STM32L1xxxC', full: '(ROM Table)' }],
+            ['20:428', { type: 'STM32F10 (high)', full: '(ROM Table)' }],
+            ['20:429', { type: 'STM32L1xxx6A/8A/BA', full: '(ROM Table)' }],
+            ['20:430', { type: 'STM32F10 (xl)', full: '(ROM Table)' }],
+            ['20:431', { type: 'STM32F411xx', full: '(ROM Table)' }],
+            ['20:432', { type: 'STM32F373/8', full: '(ROM Table)' }],
+            ['20:433', { type: 'STM32F401xD/E', full: '(ROM Table)' }],
+            ['20:434', { type: 'STM32F469/79', full: '(ROM Table)' }],
+            ['20:435', { type: 'STM32L43/44', full: '(ROM Table)' }],
+            ['20:436', { type: 'STM32L1xxxD', full: '(ROM Table)' }],
+            ['20:437', { type: 'STM32L1xxxE', full: '(ROM Table)' }],
+            ['20:438', { type: 'STM32F303/34/28', full: '(ROM Table)' }],
+            ['20:439', { type: 'STM32F301/02/18', full: '(ROM Table)' }],
+            ['20:440', { type: 'STM32F03/5', full: '(ROM Table)' }],
+            ['20:441', { type: 'STM32F412xx', full: '(ROM Table)' }],
+            ['20:442', { type: 'STM32F03/9', full: '(ROM Table)' }],
+            ['20:444', { type: 'STM32F03xx4', full: '(ROM Table)' }],
+            ['20:445', { type: 'STM32F04/7', full: '(ROM Table)' }],
+            ['20:446', { type: 'STM32F302/03/98', full: '(ROM Table)' }],
+            ['20:447', { type: 'STM32L07/08', full: '(ROM Table)' }],
+            ['20:448', { type: 'STM32F070/1/2', full: '(ROM Table)' }],
+            ['20:449', { type: 'STM32F74/5', full: '(ROM Table)' }],
+            ['20:450', { type: 'STM32H74/5', full: '(ROM Table)' }],
+            ['20:451', { type: 'STM32F76/7', full: '(ROM Table)' }],
+            ['20:452', { type: 'STM32F72/3', full: '(ROM Table)' }],
+            ['20:457', { type: 'STM32L01/2', full: '(ROM Table)' }],
+            ['20:458', { type: 'STM32F410xx', full: '(ROM Table)' }],
+            ['20:460', { type: 'STM32G07/8', full: '(ROM Table)' }],
+            ['20:461', { type: 'STM32L496/A6', full: '(ROM Table)' }],
+            ['20:462', { type: 'STM32L45/46', full: '(ROM Table)' }],
+            ['20:463', { type: 'STM32F413/23', full: '(ROM Table)' }],
+            ['20:464', { type: 'STM32L412/22', full: '(ROM Table)' }],
+            ['20:466', { type: 'STM32G03/04', full: '(ROM Table)' }],
+            ['20:468', { type: 'STM32G431/41', full: '(ROM Table)' }],
+            ['20:469', { type: 'STM32G47/48', full: '(ROM Table)' }],
+            ['20:470', { type: 'STM32L4R/S', full: '(ROM Table)' }],
+            ['20:471', { type: 'STM32L4P5/Q5', full: '(ROM Table)' }],
+            ['20:479', { type: 'STM32G491xx', full: '(ROM Table)' }],
+            ['20:480', { type: 'STM32H7A/B', full: '(ROM Table)' }],
+            ['20:495', { type: 'STM32WB50/55', full: '(ROM Table)' }],
+            ['20:497', { type: 'STM32WLE5xx', full: '(ROM Table)' }],
+        ]);
+
+        function adiPartNumLookup(designer, part) {
+            const key = `${(designer >>> 0).toString(16)}:${(part >>> 0).toString(16).padStart(3, '0')}`;
+            return ADI_PARTNUM.get(key) || { type: 'Unrecognized', full: `D:${(designer >>> 0).toString(16)} P:${(part >>> 0).toString(16)}` };
+        }
+
+        function u32ToHex(v) {
+            const x = (v >>> 0).toString(16).toUpperCase().padStart(8, '0');
+            return `0x${x}`;
+        }
+
+        function readU32LE(bytes, off = 0) {
+            return ((bytes[off] >>> 0) |
+                ((bytes[off + 1] >>> 0) << 8) |
+                ((bytes[off + 2] >>> 0) << 16) |
+                ((bytes[off + 3] >>> 0) << 24)) >>> 0;
+        }
+
+        function u32FromBytesLE(bytes, off = 0) {
+            return readU32LE(bytes, off) >>> 0;
+        }
+
+        function writeU32LE(dst, off, v) {
+            const x = v >>> 0;
+            dst[off] = x & 0xFF;
+            dst[off + 1] = (x >>> 8) & 0xFF;
+            dst[off + 2] = (x >>> 16) & 0xFF;
+            dst[off + 3] = (x >>> 24) & 0xFF;
+        }
+
+        function parseHexOrDec(text) {
+            const s = (text || '').trim();
+            if (s.startsWith('0x') || s.startsWith('0X')) return parseInt(s.substring(2), 16) >>> 0;
+            return parseInt(s, 10) >>> 0;
+        }
+
+        function bytesToHex2(b) {
+            return (b & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+        }
+
+        function isPrintableAscii(code) {
+            return code >= 0x20 && code <= 0x7E;
+        }
+
+        class HexEditor {
+            constructor(opts = {}) {
+                this.bytesPerRow = opts.bytesPerRow || 16;
+                this.baseAddr = 0;
+                this.data = new Uint8Array(0);
+                this.onChange = opts.onChange || null;
+                this.editMode = 'byte';
+                this._dirtyWords = new Set();
+                this._root = null;
+                this._view = null;
+                this._selIndex = null;
+                this._selKind = 'hex';
+                this._overlay = null;
+                this._boundKeyDown = (e) => this._onKeyDown(e);
+                this._boundClick = (e) => this._onClick(e);
+                this._boundDblClick = (e) => this._onDblClick(e);
+            }
+
+            render(containerEl) {
+                if (!containerEl) return;
+                containerEl.innerHTML = '';
+
+                const root = document.createElement('div');
+                root.className = 'hex-editor';
+                root.tabIndex = 0;
+
+                const toolbar = document.createElement('div');
+                toolbar.className = 'hex-toolbar';
+
+                const title = document.createElement('div');
+                title.style.fontWeight = '800';
+                title.textContent = 'Hex viewer';
+
+                const modeLabel = document.createElement('label');
+                modeLabel.textContent = 'Edit:';
+                const modeSel = document.createElement('select');
+                const addOpt = (v, t) => {
+                    const o = document.createElement('option');
+                    o.value = v;
+                    o.textContent = t;
+                    modeSel.appendChild(o);
+                };
+                addOpt('byte', 'byte');
+                addOpt('word', 'word (16-bit)');
+                addOpt('dword', 'dword (32-bit)');
+                modeSel.value = this.editMode;
+                modeSel.onchange = () => {
+                    this.editMode = modeSel.value;
+                };
+                modeLabel.appendChild(modeSel);
+
+                const meta = document.createElement('div');
+                meta.style.marginLeft = 'auto';
+                meta.style.color = '#9ca3af';
+                meta.textContent = 'Tip: click to select, double-click to edit, type in ASCII view';
+
+                toolbar.appendChild(title);
+                toolbar.appendChild(modeLabel);
+                toolbar.appendChild(meta);
+
+                const view = document.createElement('div');
+                view.className = 'hex-view';
+
+                root.appendChild(toolbar);
+                root.appendChild(view);
+
+                root.addEventListener('keydown', this._boundKeyDown);
+                root.addEventListener('click', this._boundClick);
+                root.addEventListener('dblclick', this._boundDblClick);
+
+                this._root = root;
+                this._view = view;
+                containerEl.appendChild(root);
+                this._renderView();
+            }
+
+            setData(bytes, baseAddr = 0) {
+                this.data = bytes ? new Uint8Array(bytes) : new Uint8Array(0);
+                this.baseAddr = baseAddr >>> 0;
+                this._selIndex = null;
+                this._selKind = 'hex';
+                this._dirtyWords.clear();
+                this._renderView();
+            }
+
+            isDirty() {
+                return this._dirtyWords.size > 0;
+            }
+
+            clearDirty() {
+                this._dirtyWords.clear();
+            }
+
+            markDirty(startByte, lengthBytes) {
+                const s = Math.max(0, startByte | 0);
+                const e = Math.min(this.data.length, (s + (lengthBytes | 0)) | 0);
+                if (e <= s) return;
+                const w0 = (s >>> 2) | 0;
+                const w1 = ((e - 1) >>> 2) | 0;
+                for (let w = w0; w <= w1; w++) {
+                    this._dirtyWords.add(w);
+                }
+            }
+
+            getDirtyWordRanges() {
+                if (this._dirtyWords.size === 0) return [];
+                const words = Array.from(this._dirtyWords).sort((a, b) => a - b);
+                const ranges = [];
+                let start = words[0];
+                let prev = words[0];
+                for (let i = 1; i < words.length; i++) {
+                    const w = words[i];
+                    if (w === (prev + 1)) {
+                        prev = w;
+                        continue;
+                    }
+                    ranges.push({ startWord: start, wordCount: (prev - start + 1) });
+                    start = w;
+                    prev = w;
+                }
+                ranges.push({ startWord: start, wordCount: (prev - start + 1) });
+                return ranges;
+            }
+
+            getData() {
+                return new Uint8Array(this.data);
+            }
+
+            _renderView() {
+                if (!this._view) return;
+                const view = this._view;
+                view.innerHTML = '';
+
+                if (!this.data || this.data.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.style.color = '#9ca3af';
+                    empty.textContent = '(no data)';
+                    view.appendChild(empty);
+                    return;
+                }
+
+                const bpr = this.bytesPerRow;
+                const rows = Math.ceil(this.data.length / bpr);
+                for (let r = 0; r < rows; r++) {
+                    const rowStart = r * bpr;
+                    const rowEnd = Math.min(this.data.length, rowStart + bpr);
+
+                    const row = document.createElement('div');
+                    row.className = 'hex-row';
+
+                    const off = document.createElement('div');
+                    off.className = 'hex-off';
+                    off.textContent = u32ToHex((this.baseAddr + rowStart) >>> 0);
+
+                    const hex = document.createElement('div');
+                    hex.className = 'hex-bytes';
+                    const ascii = document.createElement('div');
+                    ascii.className = 'hex-ascii';
+
+                    for (let i = 0; i < bpr; i++) {
+                        const idx = rowStart + i;
+
+                        if (i === 8) {
+                            const gap = document.createTextNode(' ');
+                            hex.appendChild(gap);
+                        }
+
+                        if (idx < rowEnd) {
+                            const b = this.data[idx] & 0xFF;
+
+                            const s = document.createElement('span');
+                            s.className = 'byte';
+                            s.dataset.kind = 'hex';
+                            s.dataset.index = String(idx);
+                            s.textContent = bytesToHex2(b);
+                            if (this._selIndex === idx && this._selKind === 'hex') s.classList.add('sel');
+                            hex.appendChild(s);
+                            hex.appendChild(document.createTextNode(' '));
+
+                            const a = document.createElement('span');
+                            a.className = 'ascii';
+                            a.dataset.kind = 'ascii';
+                            a.dataset.index = String(idx);
+                            a.textContent = isPrintableAscii(b) ? String.fromCharCode(b) : '.';
+                            if (this._selIndex === idx && this._selKind === 'ascii') a.classList.add('sel');
+                            ascii.appendChild(a);
+                        } else {
+                            hex.appendChild(document.createTextNode('   '));
+                            ascii.appendChild(document.createTextNode(' '));
+                        }
+                    }
+
+                    row.appendChild(off);
+                    row.appendChild(hex);
+                    row.appendChild(ascii);
+                    view.appendChild(row);
+                }
+            }
+
+            _select(index, kind) {
+                if (index === null || index === undefined) return;
+                const idx = index | 0;
+                if (idx < 0 || idx >= this.data.length) return;
+                this._selIndex = idx;
+                this._selKind = kind || 'hex';
+                this._renderView();
+            }
+
+            _nextIndex(delta) {
+                if (this._selIndex === null || this._selIndex === undefined) return;
+                const n = Math.max(0, Math.min(this.data.length - 1, (this._selIndex + delta) | 0));
+                this._selIndex = n;
+                this._renderView();
+            }
+
+            _onClick(e) {
+                const t = e.target;
+                if (!t || !t.dataset) return;
+                const kind = t.dataset.kind;
+                const idx = t.dataset.index;
+                if (kind && idx !== undefined) {
+                    this._select(parseInt(idx, 10), kind);
+                    if (this._root) this._root.focus();
+                }
+            }
+
+            _onDblClick(e) {
+                const t = e.target;
+                if (!t || !t.dataset) return;
+                const kind = t.dataset.kind;
+                const idxStr = t.dataset.index;
+                if (!kind || idxStr === undefined) return;
+                const idx = parseInt(idxStr, 10);
+                this._select(idx, kind);
+
+                if (kind === 'hex') {
+                    this._beginHexEditAtTarget(t, idx);
+                } else if (kind === 'ascii') {
+                    this._beginAsciiEditAtTarget(t, idx);
+                }
+            }
+
+            _editSizeBytes() {
+                if (this.editMode === 'dword') return 4;
+                if (this.editMode === 'word') return 2;
+                return 1;
+            }
+
+            _alignedIndex(index) {
+                const size = this._editSizeBytes();
+                if (size <= 1) return index;
+                return index & ~(size - 1);
+            }
+
+            _beginHexEditAtTarget(targetEl, index) {
+                const start = this._alignedIndex(index);
+                const size = this._editSizeBytes();
+                if (start < 0 || (start + size) > this.data.length) return;
+
+                const rect = targetEl.getBoundingClientRect();
+                const overlay = document.createElement('div');
+                overlay.className = 'hex-input-overlay';
+                overlay.style.left = `${Math.max(8, rect.left)}px`;
+                overlay.style.top = `${Math.max(8, rect.top - 2)}px`;
+
+                const input = document.createElement('input');
+                const current = [];
+                for (let i = 0; i < size; i++) current.push(bytesToHex2(this.data[start + i]));
+                input.value = current.join('');
+                input.maxLength = size * 2;
+                input.placeholder = (size === 1) ? '00' : (size === 2) ? '0000' : '00000000';
+
+                const finish = (commit) => {
+                    this._endOverlay();
+                    if (!commit) return;
+                    const text = (input.value || '').trim();
+                    if (!/^[0-9a-fA-F]+$/.test(text) || text.length !== (size * 2)) return;
+                    for (let i = 0; i < size; i++) {
+                        const byteText = text.substr(i * 2, 2);
+                        this.data[start + i] = parseInt(byteText, 16) & 0xFF;
+                    }
+                    this.markDirty(start, size);
+                    if (this.onChange) this.onChange({ start, length: size, kind: 'hex' });
+                    this._select(start, 'hex');
+                };
+
+                input.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        finish(true);
+                    } else if (ev.key === 'Escape') {
+                        ev.preventDefault();
+                        finish(false);
+                    }
+                });
+
+                input.addEventListener('blur', () => finish(true));
+
+                overlay.appendChild(input);
+                document.body.appendChild(overlay);
+                this._overlay = overlay;
+                input.focus();
+                input.select();
+            }
+
+            _beginAsciiEditAtTarget(targetEl, index) {
+                if (index < 0 || index >= this.data.length) return;
+                const rect = targetEl.getBoundingClientRect();
+                const overlay = document.createElement('div');
+                overlay.className = 'hex-input-overlay';
+                overlay.style.left = `${Math.max(8, rect.left)}px`;
+                overlay.style.top = `${Math.max(8, rect.top - 2)}px`;
+
+                const input = document.createElement('input');
+                input.value = isPrintableAscii(this.data[index]) ? String.fromCharCode(this.data[index]) : '';
+                input.maxLength = 1;
+                input.placeholder = '.';
+                input.style.width = '40px';
+
+                const finish = (commit) => {
+                    this._endOverlay();
+                    if (!commit) return;
+                    const v = (input.value || '');
+                    if (!v.length) return;
+                    const code = v.charCodeAt(0) & 0xFF;
+                    this.data[index] = code;
+                    this.markDirty(index, 1);
+                    if (this.onChange) this.onChange({ start: index, length: 1, kind: 'ascii' });
+                    this._select(Math.min(this.data.length - 1, index + 1), 'ascii');
+                };
+
+                input.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        finish(true);
+                    } else if (ev.key === 'Escape') {
+                        ev.preventDefault();
+                        finish(false);
+                    }
+                });
+                input.addEventListener('blur', () => finish(true));
+
+                overlay.appendChild(input);
+                document.body.appendChild(overlay);
+                this._overlay = overlay;
+                input.focus();
+                input.select();
+            }
+
+            _endOverlay() {
+                if (!this._overlay) return;
+                try {
+                    this._overlay.remove();
+                } catch (e) {
+                    /* ignore */
+                }
+                this._overlay = null;
+                if (this._root) this._root.focus();
+                this._renderView();
+            }
+
+            _onKeyDown(e) {
+                if (this._overlay) return;
+                if (this._selIndex === null || this._selIndex === undefined) return;
+
+                if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    this._nextIndex(-1);
+                    return;
+                }
+                if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    this._nextIndex(1);
+                    return;
+                }
+                if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    this._nextIndex(-this.bytesPerRow);
+                    return;
+                }
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    this._nextIndex(this.bytesPerRow);
+                    return;
+                }
+
+                if (this._selKind === 'ascii' && e.key && e.key.length === 1) {
+                    const code = e.key.charCodeAt(0) & 0xFF;
+                    if (isPrintableAscii(code)) {
+                        e.preventDefault();
+                        this.data[this._selIndex] = code;
+                        this.markDirty(this._selIndex, 1);
+                        if (this.onChange) this.onChange({ start: this._selIndex, length: 1, kind: 'ascii' });
+                        this._selIndex = Math.min(this.data.length - 1, this._selIndex + 1);
+                        this._renderView();
+                    }
+                }
+            }
+        }
+
+        function decodeApIdr(idr) {
+            /* Matches firmware parsing in swd_apscan_test() and ADIv5 APIDR layout.
+             * - REV:    bits 27:24
+             * - JEP106: bits 26:17 (10-bit designer)
+             * - CLASS:  bits 16:13
+             * - VAR:    bits 7:4
+             * - TYPE:   bits 3:0
+             */
+            const rev = (idr >>> 24) & 0x0F;
+            const designer = (idr >>> 17) & 0x3FF;
+            const ap_class = (idr >>> 13) & 0x0F;
+            const variant = (idr >>> 4) & 0x0F;
+            const type = (idr >>> 0) & 0x0F;
+            return { rev, designer, ap_class, variant, type };
+        }
+
+        function apTypeName(info) {
+            if (!info) return 'unknown';
+            if (info.ap_class === 0x08) {
+                if (info.type === 0x01) return 'MEM-AP (AHB)';
+                if (info.type === 0x02) return 'MEM-AP (APB)';
+                if (info.type === 0x04) return 'MEM-AP (AXI)';
+                return `MEM-AP (type=${info.type})`;
+            }
+            return `class=0x${info.ap_class.toString(16)} type=0x${info.type.toString(16)}`;
+        }
+
+        class Swd {
+            constructor(esp, logger) {
+                this.esp = esp;
+                this.log = logger || (() => {});
+                this.memAp = null;
+                this.lastIoMask = null;
+                this.lastVerbose = false;
+            }
+
+            _expectOkStatus(rsp, what) {
+                if (!rsp) throw new Error(`${what}: no response`);
+                if (rsp.status !== SWD_UART_STATUS_OK) {
+                    throw new Error(`${what}: status=${rsp.status}`);
+                }
+            }
+
+            _checkAckOrRetry(ack) {
+                if (ack === 1) return { ok: true, retry: false };
+                if (ack === 2) return { ok: false, retry: true };
+                if (ack === 4) return { ok: false, retry: false, fault: true };
+                if (ack === 8) throw new Error('SWD parity mismatch');
+                throw new Error(`SWD bad ACK=${ack}`);
+            }
+
+            async transfer(ap, write, a23, value = 0) {
+                const args = new Uint8Array(8);
+                args[0] = ap ? 1 : 0;
+                args[1] = write ? 1 : 0;
+                args[2] = a23 & 0x03;
+                args[3] = 0;
+                writeU32LE(args, 4, value >>> 0);
+                const rsp = await this.esp.swdRequest(SWD_UART_OP_TRANSFER, args, { timeoutMs: 1500 });
+                this._expectOkStatus(rsp, `transfer(ap=${ap ? 1 : 0},write=${write ? 1 : 0},a23=${a23})`);
+                const outVal = (rsp.data && rsp.data.length >= 4) ? readU32LE(rsp.data, 0) : 0;
+                return { ack: rsp.ack, value: outVal >>> 0, rsp };
+            }
+
+            async transferRaw(ap, write, a23, value = 0) {
+                const args = new Uint8Array(8);
+                args[0] = ap ? 1 : 0;
+                args[1] = write ? 1 : 0;
+                args[2] = a23 & 0x03;
+                args[3] = 0;
+                writeU32LE(args, 4, value >>> 0);
+                const rsp = await this.esp.swdRequest(SWD_UART_OP_TRANSFER, args, { timeoutMs: 1500 });
+                const outVal = (rsp && rsp.data && rsp.data.length >= 4) ? readU32LE(rsp.data, 0) : 0;
+                return { ack: rsp ? rsp.ack : 0, value: outVal >>> 0, rsp };
+            }
+
+            async dpRead(a23) {
+                for (let attempt = 0; attempt < 32; attempt++) {
+                    const t = await this.transfer(false, false, a23, 0);
+                    const ar = this._checkAckOrRetry(t.ack);
+                    if (ar.retry) {
+                        await new Promise(r => setTimeout(r, 10));
+                        continue;
+                    }
+                    if (ar.fault) {
+                        throw new Error('SWD FAULT');
+                    }
+                    return t.value >>> 0;
+                }
+                throw new Error('dpRead: too many WAIT retries');
+            }
+
+            async dpWrite(a23, value) {
+                for (let attempt = 0; attempt < 32; attempt++) {
+                    const t = await this.transfer(false, true, a23, value >>> 0);
+                    const ar = this._checkAckOrRetry(t.ack);
+                    if (ar.retry) {
+                        await new Promise(r => setTimeout(r, 10));
+                        continue;
+                    }
+                    if (ar.fault) {
+                        throw new Error('SWD FAULT');
+                    }
+                    return true;
+                }
+                throw new Error('dpWrite: too many WAIT retries');
+            }
+
+            async clearStickyErrors() {
+                /* ABORT bits: clear STKCMP/STKERR/WDERR/ORUNERR (best-effort) */
+                try {
+                    await this.dpWrite(DP_A23_ABORT, 0x1E);
+                } catch (e) {
+                    /* ignore */
+                }
+            }
+
+            async ensurePowerUp(timeoutMs = 800) {
+                /* Mirrors Flipper app swd_ensure_powerup():
+                 * request debug + system power-up and wait for ACKs.
+                 * Without this, a cold target may return APIDR/APBASE as 0.
+                 */
+                /* DP CTRL/STAT is a banked DP register (A[3:2]=0b01).
+                 * If firmware previously selected a different DP bank (e.g. to read TARGETID),
+                 * reading/writing A[3:2]=0b01 here may hit the wrong register.
+                 * Force SELECT=0 so DPBANKSEL=0 and we really access CTRL/STAT.
+                 *
+                 * Note: writing DP SELECT from the host is safe in this firmware; it explicitly
+                 * invalidates/updates the cached SELECT value.
+                 */
+                try {
+                    await this.dpWrite(DP_A23_SELECT, 0);
+                } catch (e) {
+                    /* ignore and keep trying below */
+                }
+
+                const start = performance.now();
+                let last = 0;
+
+                while (performance.now() - start < timeoutMs) {
+                    last = await this.dpRead(DP_A23_CTRLSTAT);
+
+                    const want = (CSYSPWRUPREQ | CDBGPWRUPREQ) >>> 0;
+                    const haveReq = (last & want) === want;
+                    const haveAck = ((last & (CSYSPWRUPACK | CDBGPWRUPACK)) === (CSYSPWRUPACK | CDBGPWRUPACK));
+
+                    if (!haveReq) {
+                        const v = (last | want) >>> 0;
+                        await this.dpWrite(DP_A23_CTRLSTAT, v);
+                        await new Promise(r => setTimeout(r, 20));
+                        continue;
+                    }
+
+                    if (haveAck) {
+                        return { ok: true, ctrlstat: last >>> 0 };
+                    }
+
+                    await new Promise(r => setTimeout(r, 20));
+                }
+
+                return { ok: false, ctrlstat: last >>> 0 };
+            }
+
+            async postDetectInit(opts = {}) {
+                const timeoutMs = (opts && opts.timeoutMs) ? (opts.timeoutMs | 0) : 1200;
+                const trace = !!(opts && opts.trace);
+                const allowRecover = (opts && opts.allowRecover !== undefined) ? !!opts.allowRecover : true;
+
+                const tryOnce = async () => {
+                    const pu = await this.ensurePowerUp(timeoutMs);
+                    this._trace(trace, `DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
+                    await this.clearStickyErrors();
+                    await this.flushRdbuff();
+                    return pu;
+                };
+
+                try {
+                    return await tryOnce();
+                } catch (e) {
+                    const msg = (e && e.message) ? e.message : String(e);
+                    if (allowRecover && msg.includes('SWD bad ACK=7')) {
+                        /* Link looks unstable immediately after detect. Re-run detect once and retry.
+                         * IMPORTANT: avoid recursion (recoverLink() normally runs postDetectInit()).
+                         */
+                        await this.recoverLink('post-detect init: bad ACK=7', { skipPostInit: true });
+                        return await tryOnce();
+                    }
+                    throw e;
+                }
+            }
+
+            async flushRdbuff() {
+                /* If a posted AP read completed but the subsequent DP RDBUFF read failed,
+                 * a stale value can remain pending and shift later reads. Drain it best-effort.
+                 */
+                try {
+                    await this.transferRaw(false, false, DP_A23_RDBUFF, 0);
+                    await this.transferRaw(false, false, DP_A23_RDBUFF, 0);
+                } catch (e) {
+                    /* ignore */
+                }
+            }
+
+            ackName(ack) {
+                if (ack === 1) return 'OK';
+                if (ack === 2) return 'WAIT';
+                if (ack === 4) return 'FAULT';
+                if (ack === 8) return 'PARITY';
+                return `BAD(${ack})`;
+            }
+
+            async dpDebugOnce() {
+                const lines = [];
+
+                const dpidr = await this.transferRaw(false, false, DP_A23_ABORT, 0);
+                lines.push(`DP DPIDR/IDCODE: ack=${this.ackName(dpidr.ack)} value=${u32ToHex(dpidr.value)}`);
+
+                const ctrl0 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
+                lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl0.ack)} value=${u32ToHex(ctrl0.value)}`);
+
+                /* On cold targets, AP reads can return 0 until power-up is requested/acked. */
+                try {
+                    const pu = await this.ensurePowerUp(800);
+                    lines.push(`DP POWERUP:     ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
+                } catch (e) {
+                    lines.push(`DP POWERUP:     ERROR: ${e.message}`);
+                }
+
+                const abort = await this.transferRaw(false, true, DP_A23_ABORT, 0x1E);
+                lines.push(`DP ABORT(0x1E): ack=${this.ackName(abort.ack)} (firmware may force OK)`);
+
+                const ctrl1 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
+                lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl1.ack)} value=${u32ToHex(ctrl1.value)} (banked)`);
+
+                /* Do not write DP SELECT here.
+                 * The firmware caches SELECT and may skip rewriting it; if the host changes SELECT behind its back,
+                 * subsequent AP reads can silently access the wrong AP/Bank and return zeros with ACK=OK.
+                 */
+
+                /* Use the same safe AP helpers (SELECT+RDBUFF handling) for debug probing. */
+                try {
+                    const idr0 = await this.apRead(0, AP_IDR, true);
+                    lines.push(`AP0 IDR:         ${u32ToHex(idr0)} (${apTypeName(decodeApIdr(idr0))})`);
+                } catch (e) {
+                    lines.push(`AP0 IDR:         ERROR: ${e.message}`);
+                }
+                try {
+                    const base0 = await this.apRead(0, AP_BASE, true);
+                    lines.push(`AP0 BASE:        ${u32ToHex(base0)}`);
+                } catch (e) {
+                    lines.push(`AP0 BASE:        ERROR: ${e.message}`);
+                }
+
+                return lines;
+            }
+
+            async detectPins(ioMask, verboseLogs = false) {
+                this.lastIoMask = ioMask >>> 0;
+                this.lastVerbose = !!verboseLogs;
+                const args = new Uint8Array(4);
+                writeU32LE(args, 0, ioMask >>> 0);
+                const flags = verboseLogs ? SWD_UART_FLAG_VERBOSE_LOG : 0;
+                const rsp = await this.esp.swdRequest(SWD_UART_OP_DETECT_PINS, args, { flags, timeoutMs: 15000 });
+                this._expectOkStatus(rsp, 'detectPins');
+                if (!rsp.data || rsp.data.length < 12) {
+                    throw new Error('detectPins: short response data');
+                }
+
+                const det = {
+                    swdio_gpio: rsp.swdio_gpio,
+                    swclk_gpio: rsp.swclk_gpio,
+                    dpidr: readU32LE(rsp.data, 0),
+                    targetid: readU32LE(rsp.data, 4),
+                    dpidr_ok: rsp.data[8] ? true : false,
+                    targetid_ok: rsp.data[9] ? true : false,
+                    detected_device: rsp.data[10] ? true : false
+                };
+
+                return det;
+            }
+
+            async recoverLink(reason = '', opts = {}) {
+                if (this.lastIoMask === null || this.lastIoMask === undefined) {
+                    throw new Error('recoverLink: no previous ioMask');
+                }
+                const msg = reason ? ` (${reason})` : '';
+                this.log(`SWD link recovery: re-detecting pins${msg}...`, 'info');
+                const det = await this.detectPins(this.lastIoMask, this.lastVerbose);
+                this.log(`SWD link recovery: DPIDR=${u32ToHex(det.dpidr)} ok=${det.dpidr_ok ? 1 : 0}`, 'info');
+                const skipPostInit = !!(opts && opts.skipPostInit);
+                if (!skipPostInit) {
+                    try {
+                        await this.postDetectInit({ timeoutMs: 1200, allowRecover: false });
+                    } catch (e) {
+                        /* ignore */
+                    }
+                }
+                return det;
+            }
+
+            _trace(enabled, message) {
+                if (!enabled) return;
+                if (this.log) this.log(message, 'info');
+            }
+
+            async deinit() {
+                const rsp = await this.esp.swdRequest(SWD_UART_OP_DEINIT, new Uint8Array(0), { timeoutMs: 1000 });
+                this._expectOkStatus(rsp, 'deinit');
+                this.memAp = null;
+                return true;
+            }
+
+            async apRead(ap, apOff, single = false) {
+                const args = new Uint8Array(4);
+                args[0] = ap & 0xFF;
+                args[1] = apOff & 0xFF;
+                args[2] = 0;
+                args[3] = 0;
+
+                const op = single ? SWD_UART_OP_AP_READ_SINGLE : SWD_UART_OP_AP_READ;
+
+                for (let attempt = 0; attempt < 12; attempt++) {
+                    const rsp = await this.esp.swdRequest(op, args, { timeoutMs: 1500 });
+                    this._expectOkStatus(rsp, `apRead(ap=${ap},off=0x${apOff.toString(16)})`);
+                    let ar;
+                    try {
+                        ar = this._checkAckOrRetry(rsp.ack);
+                    } catch (e) {
+                        const m = (e && e.message) ? e.message : String(e);
+                        if (m.includes('SWD bad ACK=7') && attempt < 2) {
+                            await this.recoverLink('bad ACK=7 during apRead');
+                            await this.flushRdbuff();
+                            await new Promise(r => setTimeout(r, 20));
+                            continue;
+                        }
+                        throw e;
+                    }
+                    if (ar.retry) {
+                        await new Promise(r => setTimeout(r, 10));
+                        continue;
+                    }
+                    if (ar.fault) {
+                        if (attempt < 2) {
+                            await this.clearStickyErrors();
+                            await new Promise(r => setTimeout(r, 10));
+                            continue;
+                        }
+                        throw new Error('SWD FAULT');
+                    }
+                    if (!rsp.data || rsp.data.length < 4) {
+                        throw new Error('apRead: short data');
+                    }
+                    return readU32LE(rsp.data, 0);
+                }
+                throw new Error('apRead: too many retries');
+            }
+
+            async apReadStrict(ap, apOff, single = false) {
+                /* C-like semantics: do not attempt link recovery here.
+                 * Let the caller decide whether to restart a larger operation.
+                 */
+                const args = new Uint8Array(4);
+                args[0] = ap & 0xFF;
+                args[1] = apOff & 0xFF;
+                args[2] = 0;
+                args[3] = 0;
+
+                const op = single ? SWD_UART_OP_AP_READ_SINGLE : SWD_UART_OP_AP_READ;
+
+                for (let attempt = 0; attempt < 64; attempt++) {
+                    const rsp = await this.esp.swdRequest(op, args, { timeoutMs: 1500 });
+                    this._expectOkStatus(rsp, `apReadStrict(ap=${ap},off=0x${apOff.toString(16)})`);
+
+                    if (rsp.ack === 1) {
+                        if (!rsp.data || rsp.data.length < 4) {
+                            throw new Error('apReadStrict: short data');
+                        }
+                        return readU32LE(rsp.data, 0) >>> 0;
+                    }
+
+                    if (rsp.ack === 2) {
+                        await new Promise(r => setTimeout(r, 10));
+                        continue;
+                    }
+
+                    if (rsp.ack === 8) {
+                        throw new Error('SWD parity mismatch');
+                    }
+
+                    /* FAULT, BAD(7), etc -> fail fast */
+                    throw new Error(`SWD bad ACK=${rsp.ack}`);
+                }
+
+                throw new Error('apReadStrict: too many WAIT retries');
+            }
+
+            async apWrite(ap, apOff, value) {
+                const args = new Uint8Array(8);
+                args[0] = ap & 0xFF;
+                args[1] = apOff & 0xFF;
+                args[2] = 0;
+                args[3] = 0;
+                writeU32LE(args, 4, value >>> 0);
+
+                for (let attempt = 0; attempt < 12; attempt++) {
+                    const rsp = await this.esp.swdRequest(SWD_UART_OP_AP_WRITE, args, { timeoutMs: 1500 });
+                    this._expectOkStatus(rsp, `apWrite(ap=${ap},off=0x${apOff.toString(16)})`);
+                    let ar;
+                    try {
+                        ar = this._checkAckOrRetry(rsp.ack);
+                    } catch (e) {
+                        const m = (e && e.message) ? e.message : String(e);
+                        if (m.includes('SWD bad ACK=7') && attempt < 2) {
+                            await this.recoverLink('bad ACK=7 during apWrite');
+                            await this.flushRdbuff();
+                            await new Promise(r => setTimeout(r, 20));
+                            continue;
+                        }
+                        throw e;
+                    }
+                    if (ar.retry) {
+                        await new Promise(r => setTimeout(r, 10));
+                        continue;
+                    }
+                    if (ar.fault) {
+                        if (attempt < 2) {
+                            await this.clearStickyErrors();
+                            await new Promise(r => setTimeout(r, 10));
+                            continue;
+                        }
+                        throw new Error('SWD FAULT');
+                    }
+                    return true;
+                }
+                throw new Error('apWrite: too many WAIT retries');
+            }
+
+            async apWriteStrict(ap, apOff, value) {
+                const args = new Uint8Array(8);
+                args[0] = ap & 0xFF;
+                args[1] = apOff & 0xFF;
+                args[2] = 0;
+                args[3] = 0;
+                writeU32LE(args, 4, value >>> 0);
+
+                for (let attempt = 0; attempt < 64; attempt++) {
+                    const rsp = await this.esp.swdRequest(SWD_UART_OP_AP_WRITE, args, { timeoutMs: 1500 });
+                    this._expectOkStatus(rsp, `apWriteStrict(ap=${ap},off=0x${apOff.toString(16)})`);
+
+                    if (rsp.ack === 1) {
+                        return true;
+                    }
+                    if (rsp.ack === 2) {
+                        await new Promise(r => setTimeout(r, 10));
+                        continue;
+                    }
+                    if (rsp.ack === 8) {
+                        throw new Error('SWD parity mismatch');
+                    }
+                    throw new Error(`SWD bad ACK=${rsp.ack}`);
+                }
+
+                throw new Error('apWriteStrict: too many WAIT retries');
+            }
+
+            async scanAps(maxAps = 16, opts = {}) {
+                const fullScan = !!(opts && opts.fullScan);
+                const trace = !!(opts && opts.trace);
+
+                /* Best-effort: clear sticky flags before scanning. */
+                await this.clearStickyErrors();
+
+                /* Cold start often needs explicit power-up request before AP reads. */
+                try {
+                    const pu = await this.ensurePowerUp(800);
+                    this._trace(trace, `DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
+                } catch (e) {
+                    this._trace(trace, `DP power-up: ERROR: ${e.message}`);
+                }
+
+                const aps = [];
+                let badAckRecoveries = 0;
+                let consecutiveFailures = 0;
+                let consecutiveEmptyIdr = 0;
+                for (let ap = 0; ap < maxAps; ap++) {
+                    this._trace(trace, `AP scan: probing AP${ap}...`);
+                    let idr = 0;
+                    try {
+                        idr = await this.apReadStrict(ap, AP_IDR, true);
+                        consecutiveFailures = 0;
+                        this._trace(trace, `AP${ap}: IDR=${u32ToHex(idr)}`);
+                    } catch (e) {
+                        const msg = (e && e.message) ? e.message : String(e);
+                        if (msg.includes('SWD bad ACK=7')) {
+                            /* If the line is unstable (invalid SWD ACK), don't loop forever.
+                             * Try a bounded number of recoveries, then abort the scan.
+                             */
+                            if (badAckRecoveries >= 2) {
+                                throw new Error('AP scan aborted: repeated SWD bad ACK=7 (link unstable)');
+                            }
+                            badAckRecoveries++;
+                            this._trace(trace, `AP${ap}: bad ACK=7, attempting link recovery (${badAckRecoveries}/2) then retry...`);
+                            await this.recoverLink('bad ACK=7 during scan');
+                            await new Promise(r => setTimeout(r, 80));
+                            /* retry same AP index */
+                            ap--;
+                            continue;
+                        }
+                        consecutiveFailures++;
+                        this._trace(trace, `AP${ap}: read failed (${msg}), consecutiveFailures=${consecutiveFailures}`);
+                        /* If nothing was found yet, bail out early to avoid destabilizing the link by probing
+                         * many non-existent APSEL values.
+                         */
+                        if (!fullScan && aps.length === 0 && consecutiveFailures >= 4) {
+                            throw e;
+                        }
+                        /* If we already found at least one AP, stop after a few consecutive failures. */
+                        if (!fullScan && aps.length > 0 && consecutiveFailures >= 3) {
+                            break;
+                        }
+                        continue;
+                    }
+                    if (idr === 0 || idr === 0xFFFFFFFF) {
+                        this._trace(trace, `AP${ap}: IDR ignored (${u32ToHex(idr)})`);
+
+                        if (!fullScan && aps.length > 0)
+                        {
+                            consecutiveEmptyIdr++;
+                            if (consecutiveEmptyIdr >= 8)
+                            {
+                                this._trace(trace, `AP scan: stopping after ${consecutiveEmptyIdr} empty IDRs`);
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+
+                    consecutiveEmptyIdr = 0;
+                    const info = decodeApIdr(idr);
+
+                    let base = null;
+                    try {
+                        base = await this.apReadStrict(ap, AP_BASE, true);
+                        this._trace(trace, `AP${ap}: BASE=${u32ToHex(base)}`);
+                    } catch (e) {
+                        const msg = (e && e.message) ? e.message : String(e);
+                        this._trace(trace, `AP${ap}: BASE read failed (${msg})`);
+                        base = null;
+                    }
+                    const entry = { ap, idr, info, base };
+                    aps.push(entry);
+                }
+
+                const mem = aps.find(a => a.info && a.info.ap_class === 0x08) || null;
+                this.memAp = mem ? mem.ap : null;
+                return { aps, memAp: this.memAp };
+            }
+
+            async memRead32Via(ap, address) {
+                const csw = 0x23000002;
+                const base = address >>> 0;
+
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        await this.apWriteStrict(ap, MEMAP_CSW, csw);
+                        await this.apWriteStrict(ap, MEMAP_TAR, base);
+                        /* dummy read */
+                        await this.apReadStrict(ap, MEMAP_DRW, true);
+                        const v = await this.apReadStrict(ap, MEMAP_DRW, true);
+                        return v >>> 0;
+                    } catch (e) {
+                        const msg = (e && e.message) ? e.message : String(e);
+                        if (attempt < 2) {
+                            await this.recoverLink(`memRead32Via restart (${msg})`);
+                            await this.flushRdbuff();
+                            await new Promise(r => setTimeout(r, 20));
+                            continue;
+                        }
+                        throw e;
+                    }
+                }
+
+                throw new Error('memRead32Via: unreachable');
+            }
+
+            async memReadBlock32Via(ap, address, words) {
+                const csw = 0x23000012;
+                const base = address >>> 0;
+                const count = words >>> 0;
+
+                /* C-like behavior: if anything goes wrong mid-block, restart the whole block.
+                 * This avoids partial results / word shifts after recover.
+                 */
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    const temp = [];
+                    try {
+                        await this.apWriteStrict(ap, MEMAP_CSW, csw);
+                        await this.apWriteStrict(ap, MEMAP_TAR, base);
+                        /* dummy read to align MEM-AP read buffer */
+                        await this.apReadStrict(ap, MEMAP_DRW, true);
+
+                        for (let i = 0; i < count; i++) {
+                            const v = await this.apReadStrict(ap, MEMAP_DRW, true);
+                            temp.push(v >>> 0);
+                        }
+                        return temp;
+                    } catch (e) {
+                        const msg = (e && e.message) ? e.message : String(e);
+                        if (attempt < 2) {
+                            await this.recoverLink(`memReadBlock32Via restart (${msg})`);
+                            await this.flushRdbuff();
+                            await new Promise(r => setTimeout(r, 30));
+                            continue;
+                        }
+                        throw e;
+                    }
+                }
+
+                throw new Error('memReadBlock32Via: unreachable');
+            }
+
+            async memWriteBlock32Via(ap, address, words) {
+                const csw = 0x23000012;
+                await this.apWrite(ap, MEMAP_CSW, csw);
+                await this.apWrite(ap, MEMAP_TAR, address >>> 0);
+                for (let i = 0; i < words.length; i++) {
+                    await this.apWrite(ap, MEMAP_DRW, (words[i] >>> 0));
+                }
+                return true;
+            }
+
+            async memWrite32Via(ap, address, value) {
+                const csw = 0x23000002;
+                const base = address >>> 0;
+
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        await this.apWriteStrict(ap, MEMAP_CSW, csw);
+                        await this.apWriteStrict(ap, MEMAP_TAR, base);
+                        await this.apWriteStrict(ap, MEMAP_DRW, value >>> 0);
+                        return true;
+                    } catch (e) {
+                        const msg = (e && e.message) ? e.message : String(e);
+                        if (attempt < 2) {
+                            await this.recoverLink(`memWrite32Via restart (${msg})`);
+                            await this.flushRdbuff();
+                            await new Promise(r => setTimeout(r, 20));
+                            continue;
+                        }
+                        throw e;
+                    }
+                }
+
+                throw new Error('memWrite32Via: unreachable');
+            }
+
+            async coreHaltVia(ap) {
+                const dhcsr = (SCS_DHCSR_KEY | SCS_DHCSR_C_HALT | SCS_DHCSR_C_DEBUGEN) >>> 0;
+                await this.memWrite32Via(ap, SCS_DHCSR, dhcsr);
+                const v = await this.memRead32Via(ap, SCS_DHCSR);
+                return { dhcsr: v >>> 0, halted: !!(v & SCS_DHCSR_S_HALT) };
+            }
+
+            async coreContinueVia(ap) {
+                const v = await this.memRead32Via(ap, SCS_DHCSR);
+                if (!(v & SCS_DHCSR_S_HALT)) {
+                    return { dhcsr: v >>> 0, continued: false, reason: 'not halted' };
+                }
+                await this.memWrite32Via(ap, SCS_DHCSR, SCS_DHCSR_KEY);
+                const v2 = await this.memRead32Via(ap, SCS_DHCSR);
+                return { dhcsr: v2 >>> 0, continued: true };
+            }
+
+            async coreStepVia(ap) {
+                const v = await this.memRead32Via(ap, SCS_DHCSR);
+                if (!(v & SCS_DHCSR_S_HALT)) {
+                    return { dhcsr: v >>> 0, stepped: false, reason: 'not halted' };
+                }
+                const dhcsr = (SCS_DHCSR_KEY | SCS_DHCSR_C_STEP | SCS_DHCSR_C_MASKINTS | SCS_DHCSR_C_DEBUGEN) >>> 0;
+                await this.memWrite32Via(ap, SCS_DHCSR, dhcsr);
+                const v2 = await this.memRead32Via(ap, SCS_DHCSR);
+                return { dhcsr: v2 >>> 0, stepped: true };
+            }
+
+            async coreCpuidVia(ap) {
+                const v = await this.memRead32Via(ap, SCS_CPUID);
+                return v >>> 0;
+            }
+
+            async _coreWaitRegReadyVia(ap, timeoutMs = 200) {
+                const start = performance.now();
+                while (performance.now() - start < timeoutMs) {
+                    const dhcsr = await this.memRead32Via(ap, SCS_DHCSR);
+                    if (dhcsr & SCS_DHCSR_S_REGRDY) return true;
+                    await new Promise(r => setTimeout(r, 5));
+                }
+                return false;
+            }
+
+            async coreRegReadVia(ap, regsel) {
+                await this.memWrite32Via(ap, SCS_DCRSR, (SCS_DCRSR_RD | (regsel & 0xFFFF)) >>> 0);
+                await this._coreWaitRegReadyVia(ap, 250);
+                const v = await this.memRead32Via(ap, SCS_DCRDR);
+                return v >>> 0;
+            }
+
+            async coreRegWriteVia(ap, regsel, value) {
+                await this.memWrite32Via(ap, SCS_DCRDR, value >>> 0);
+                await this.memWrite32Via(ap, SCS_DCRSR, (SCS_DCRSR_WR | (regsel & 0xFFFF)) >>> 0);
+                await this._coreWaitRegReadyVia(ap, 250);
+                return true;
+            }
+
+            async adiGetPidrVia(ap, base) {
+                const b = base >>> 0;
+                const pidrs = [];
+                for (const off of CS_PIDR_OFFS) {
+                    pidrs.push(await this.memRead32Via(ap, (b + off) >>> 0));
+                }
+
+                const designer = ((((pidrs[4] & 0x0F) << 7) | ((pidrs[2] & 0x07) << 4) | ((pidrs[1] >> 4) & 0x0F)) & 0x3FF) >>> 0;
+                const part = (((pidrs[0] & 0xFF) | ((pidrs[1] & 0x0F) << 8)) & 0xFFFF) >>> 0;
+                const revand = (((pidrs[3] >> 4) & 0x0F) & 0xFF) >>> 0;
+                const cmod = ((pidrs[3] & 0x0F) & 0xFF) >>> 0;
+                const revision = (((pidrs[2] >> 4) & 0x0F) & 0xFF) >>> 0;
+                const size = (((pidrs[2] >> 4) & 0x0F) & 0xFF) >>> 0;
+
+                return { designer, part, revision, cmod, revand, size };
+            }
+
+            async adiGetClassVia(ap, base) {
+                const b = base >>> 0;
+                const cidrs = [];
+                for (const off of CS_CIDR_OFFS) {
+                    cidrs.push(await this.memRead32Via(ap, (b + off) >>> 0));
+                }
+
+                if ((cidrs[0] & 0xFF) !== 0x0D) return null;
+                if ((cidrs[1] & 0x0F) !== 0x00) return null;
+                if ((cidrs[2] & 0xFF) !== 0x05) return null;
+                if ((cidrs[3] & 0xFF) !== 0xB1) return null;
+
+                return ((cidrs[1] >> 4) & 0x0F) >>> 0;
+            }
+
+            async adiRomtableEntryCountVia(ap, base) {
+                const b = base >>> 0;
+                let count = 0;
+                for (let pos = 0; pos < 960; pos++) {
+                    const entry = await this.memRead32Via(ap, (b + (pos * 4)) >>> 0);
+                    if ((entry & 1) === 0) break;
+                    if (entry & 0x00000FFC) break;
+                    count++;
+                }
+                return count >>> 0;
+            }
+
+            async adiRomtableGetVia(ap, base, pos) {
+                const entry = await this.memRead32Via(ap, (base + ((pos >>> 0) * 4)) >>> 0);
+                return (base + (entry & 0xFFFFF000)) >>> 0;
+            }
+
+            async memRead32(address) {
+                if (this.memAp === null || this.memAp === undefined) {
+                    throw new Error('No MEM-AP selected');
+                }
+                const ap = this.memAp;
+                const csw = 0x23000002;
+                await this.apWrite(ap, MEMAP_CSW, csw);
+                await this.apWrite(ap, MEMAP_TAR, address >>> 0);
+                const v = await this.apRead(ap, MEMAP_DRW, false);
+                return v >>> 0;
+            }
+
+            async memReadBlock32(address, words) {
+                if (this.memAp === null || this.memAp === undefined) {
+                    throw new Error('No MEM-AP selected');
+                }
+                return await this.memReadBlock32Via(this.memAp, address >>> 0, words >>> 0);
+            }
+        }
+
+        /* ============= SWD Test Functions ============= */
+
+        function calculateMaskFromCheckboxes(containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return 0;
+            
+            let mask = 0;
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
+            for (const checkbox of checkboxes) {
+                const bit = parseInt(checkbox.value, 10);
+                mask = (mask | (1 << bit)) >>> 0;
+            }
+            return mask;
+        }
+
+        async function runSWDTest() {
+            if (!espSerial || !espSerial.port) {
+                logToConsole('Not connected', 'error');
+                return;
+            }
+
+            const btnDetect = document.getElementById('btnRunSWDTest');
+            const scanBtn = document.getElementById('btnScanAps');
+            const dpBtn = document.getElementById('btnDpDebug');
+
+            const setDetectBtn = (active) => {
+                if (!btnDetect) return;
+                if (active) {
+                    btnDetect.textContent = 'Stop';
+                    btnDetect.style.background = '#ef4444';
+                } else {
+                    btnDetect.textContent = 'Detect device';
+                    btnDetect.style.background = '#10b981';
+                }
+            };
+
+            const resetSwdUi = () => {
+                const pinsEl = document.getElementById('detectedPins');
+                const idsEl = document.getElementById('detectedIds');
+                const apTabsEl = document.getElementById('apTabs');
+                const apPanelEl = document.getElementById('apPanel');
+                if (pinsEl) pinsEl.textContent = '-';
+                if (idsEl) idsEl.textContent = '-';
+                if (apTabsEl) apTabsEl.innerHTML = '';
+                if (apPanelEl) apPanelEl.textContent = '(not scanned)';
+
+                scannedAps = [];
+                activeAp = null;
+                apHexEditors.clear();
+                apSubTabState.clear();
+
+                /* New target detection should not reuse prior CoreSight scan trees. */
+                coresightTreeCache.clear();
+            };
+
+            /* Toggle behavior: if cyclic detection is running, stop it (no logs). */
+            if (detectLoopActive) {
+                detectLoopActive = false;
+                detectLoopToken++;
+                setDetectBtn(false);
+                return;
+            }
+
+            /* Best-effort: prime audio from the user gesture. */
+            primeTadaaAudio();
+
+            const detectStartMs = performance.now();
+
+            resetSwdUi();
+            if (scanBtn) scanBtn.disabled = true;
+            if (dpBtn) dpBtn.disabled = true;
+
+            detectLoopActive = true;
+            const myToken = ++detectLoopToken;
+            setDetectBtn(true);
+
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms | 0));
+
+            try {
+                const ioMask = calculateMaskFromCheckboxes('ioGpioCheckboxes');
+                const verbose = !!(document.getElementById('chkVerboseSwd') && document.getElementById('chkVerboseSwd').checked);
+
+                if (!swd) {
+                    swd = new Swd(espSerial, logToConsole);
+                }
+
+                while (detectLoopActive && myToken === detectLoopToken) {
+                    let det = null;
+                    try {
+                        /* Quiet cycling: don't ask firmware to be verbose. */
+                        det = await swd.detectPins(ioMask, false);
+                    } catch (e) {
+                        await sleep(250);
+                        continue;
+                    }
+
+                    if (!det || !det.detected_device || !det.dpidr_ok) {
+                        await sleep(250);
+                        continue;
+                    }
+
+                    /* Found a device: stop cycling. */
+                    detectLoopActive = false;
+                    setDetectBtn(false);
+
+                    if ((performance.now() - detectStartMs) >= 1000) {
+                        playTadaa();
+                    }
+
+                    /* Optional: re-run detect once with user verbosity. */
+                    try {
+                        det = await swd.detectPins(ioMask, verbose);
+                    } catch (e) {
+                        /* keep prior det */
+                    }
+
+                    const pinsEl = document.getElementById('detectedPins');
+                    const idsEl = document.getElementById('detectedIds');
+                    if (pinsEl) pinsEl.textContent = `SWDIO=GPIO${det.swdio_gpio}  SWCLK=GPIO${det.swclk_gpio}`;
+                    if (idsEl) {
+                        const tid = det.targetid_ok ? u32ToHex(det.targetid) : '-';
+                        idsEl.textContent = `${u32ToHex(det.dpidr)} / ${tid}`;
+                    }
+
+                    if (scanBtn) scanBtn.disabled = false;
+                    if (dpBtn) dpBtn.disabled = false;
+
+                    try {
+                        logToConsole(`SWD Detect: io_mask=${u32ToHex(ioMask)}`, 'info');
+                        logToConsole('DP power-up: requesting CSYSPWRUPREQ + CDBGPWRUPREQ...', 'info');
+                        const pu = await swd.postDetectInit({ timeoutMs: 1200 });
+                        logToConsole(`DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`, pu.ok ? 'info' : 'error');
+                    } catch (e) {
+                        logToConsole(`DP power-up: ERROR: ${e.message}`, 'error');
+                    }
+
+                    logToConsole('Ready: click DP Debug, then Scan APs', 'info');
+                    return;
+                }
+
+                /* Stopped by user or token change: no logs. */
+            } finally {
+                if (myToken === detectLoopToken && !detectLoopActive) {
+                    setDetectBtn(false);
+                }
+            }
+        }
+
+        async function dpDebug() {
+            if (!swd) {
+                logToConsole('SWD not initialized', 'error');
+                return;
+            }
+            try {
+                logToConsole('DP debug: running raw DP/AP probes...', 'info');
+                const lines = await swd.dpDebugOnce();
+                for (const l of lines) {
+                    logToConsole(l, 'info');
+                }
+            } catch (err) {
+                logToConsole(`DP debug error: ${err.message}`, 'error');
+            }
+        }
+
+        async function scanAps() {
+            if (!swd) {
+                logToConsole('SWD not initialized', 'error');
+                return;
+            }
+
+            if (scanInProgress) {
+                logToConsole('AP scan already running', 'info');
+                return;
+            }
+
+            try {
+                scanInProgress = true;
+                const scanBtn = document.getElementById('btnScanAps');
+                if (scanBtn) scanBtn.disabled = true;
+
+                const maxEl = document.getElementById('apScanMaxInput');
+                const fullEl = document.getElementById('chkFullApScan');
+                const verboseEl = document.getElementById('chkVerboseSwd');
+                let maxAps = 32;
+                if (maxEl && maxEl.value) {
+                    const v = parseHexOrDec(maxEl.value);
+                    if (v > 0) maxAps = v;
+                }
+                maxAps = Math.max(1, Math.min(256, maxAps | 0));
+                const fullScan = !!(fullEl && fullEl.checked);
+                const trace = !!(verboseEl && verboseEl.checked);
+
+                logToConsole(`AP scan: reading APIDR/APBASE... (max=${maxAps}${fullScan ? ', full' : ''})`, 'info');
+                const res = await swd.scanAps(maxAps, { fullScan, trace });
+                scannedAps = res.aps || [];
+
+                renderApTabs(scannedAps, res.memAp);
+
+                if (!scannedAps.length) {
+                    activeAp = null;
+                    setActiveAp(null);
+                    return;
+                }
+
+                const hasActive = (activeAp !== null && activeAp !== undefined) && scannedAps.some(a => a.ap === activeAp);
+                if (!hasActive) {
+                    activeAp = (res.memAp !== null && res.memAp !== undefined) ? res.memAp : scannedAps[0].ap;
+                }
+                setActiveAp(activeAp);
+            } catch (err) {
+                logToConsole(`AP scan error: ${err.message}`, 'error');
+            } finally {
+                scanInProgress = false;
+                const scanBtn = document.getElementById('btnScanAps');
+                if (scanBtn) scanBtn.disabled = false;
+            }
+        }
+
+        async function doRead32() {
+            if (!swd) return;
+            try {
+                const addrEl = document.getElementById('memAddrInput');
+                if (!addrEl) throw new Error('No memory address input (select a MEM-AP tab)');
+                lastMemAddrText = addrEl.value;
+                const addr = parseHexOrDec(addrEl.value);
+                if (activeAp === null || activeAp === undefined) {
+                    throw new Error('No AP selected');
+                }
+                const apInfo = scannedAps.find(a => a.ap === activeAp);
+                if (!apInfo || !apInfo.info || apInfo.info.ap_class !== 0x08) {
+                    throw new Error('Selected AP is not a MEM-AP');
+                }
+                const v = await swd.memRead32Via(activeAp, addr);
+                logToConsole(`AP${activeAp} Read32 ${u32ToHex(addr)} => ${u32ToHex(v)}`, 'info');
+            } catch (err) {
+                logToConsole(`Read32 error: ${err.message}`, 'error');
+            }
+        }
+
+        async function doReadBlock() {
+            if (!swd) return;
+            try {
+                const addrEl = document.getElementById('memAddrInput');
+                const wordsEl = document.getElementById('memWordsInput');
+                if (!addrEl || !wordsEl) throw new Error('No memory inputs (select a MEM-AP tab)');
+                lastMemAddrText = addrEl.value;
+                lastMemWordsText = wordsEl.value;
+
+                const addr = parseHexOrDec(addrEl.value);
+                const words = Math.max(1, Math.min(256, parseHexOrDec(wordsEl.value) || 16));
+                if (activeAp === null || activeAp === undefined) {
+                    throw new Error('No AP selected');
+                }
+                const apInfo = scannedAps.find(a => a.ap === activeAp);
+                if (!apInfo || !apInfo.info || apInfo.info.ap_class !== 0x08) {
+                    throw new Error('Selected AP is not a MEM-AP');
+                }
+                const data = await swd.memReadBlock32Via(activeAp, addr, words);
+                const bytes = new Uint8Array(words * 4);
+                for (let i = 0; i < data.length; i++) {
+                    const v = data[i] >>> 0;
+                    bytes[i * 4 + 0] = v & 0xFF;
+                    bytes[i * 4 + 1] = (v >>> 8) & 0xFF;
+                    bytes[i * 4 + 2] = (v >>> 16) & 0xFF;
+                    bytes[i * 4 + 3] = (v >>> 24) & 0xFF;
+                }
+                const ed = apHexEditors.get(activeAp);
+                if (ed) {
+                    ed.setData(bytes, addr);
+                }
+                const lines = [];
+                for (let i = 0; i < data.length; i++) {
+                    const a = (addr + i * 4) >>> 0;
+                    lines.push(`${u32ToHex(a)}: ${u32ToHex(data[i])}`);
+                }
+                logToConsole(`AP${activeAp} ReadBlock @${u32ToHex(addr)} words=${words}\n${lines.join('\n')}`, 'info');
+            } catch (err) {
+                logToConsole(`ReadBlock error: ${err.message}`, 'error');
+            }
+        }
+
+        function renderApTabs(aps, memAp) {
+            const tabsEl = document.getElementById('apTabs');
+            const panelEl = document.getElementById('apPanel');
+            if (!tabsEl || !panelEl) return;
+
+            tabsEl.innerHTML = '';
+            if (!aps || !aps.length) {
+                panelEl.textContent = '(no APs found)';
+                return;
+            }
+
+            for (const a of aps) {
+                const btn = document.createElement('button');
+                btn.className = 'ap-tab' + ((activeAp === a.ap) ? ' active' : '');
+                btn.dataset.ap = String(a.ap);
+                const info = a.info;
+                const t = apTypeName(info);
+                const marker = (memAp !== null && memAp !== undefined && a.ap === memAp) ? ' *' : '';
+                btn.textContent = `AP${a.ap}${marker} ${t}`;
+                btn.title = `${t}  IDR=${u32ToHex(a.idr)}`;
+                btn.onclick = () => setActiveAp(a.ap);
+                tabsEl.appendChild(btn);
+            }
+        }
+
+        function setActiveAp(ap) {
+            activeAp = ap;
+            const tabsEl = document.getElementById('apTabs');
+            const panelEl = document.getElementById('apPanel');
+            if (!tabsEl || !panelEl) return;
+
+            if (!scannedAps || !scannedAps.length) {
+                panelEl.textContent = '(no APs found)';
+                return;
+            }
+
+            if (ap === null || ap === undefined) {
+                panelEl.textContent = '(no AP selected)';
+                return;
+            }
+
+            const buttons = tabsEl.querySelectorAll('.ap-tab');
+            for (const b of buttons) {
+                b.classList.remove('active');
+                if (b.dataset && b.dataset.ap === String(ap)) {
+                    b.classList.add('active');
+                }
+            }
+
+            const a = scannedAps.find(x => x.ap === ap);
+            if (!a) {
+                panelEl.textContent = '(AP not found in scan results - rescan)';
+                return;
+            }
+
+            const info = a.info;
+            const t = apTypeName(info);
+            const baseStr = (a.base === null || a.base === undefined) ? '-' : u32ToHex(a.base);
+            const designerStr = info ? `designer=0x${info.designer.toString(16)}` : '';
+
+            const isMem = !!(info && info.ap_class === 0x08);
+
+            panelEl.innerHTML = '';
+
+            const hdr = document.createElement('div');
+            hdr.textContent = `AP${a.ap}: IDR=${u32ToHex(a.idr)}  ${t}  ${designerStr}  BASE=${baseStr}`;
+            panelEl.appendChild(hdr);
+
+            const subTabsEl = document.createElement('div');
+            subTabsEl.className = 'ap-subtabs';
+            panelEl.appendChild(subTabsEl);
+
+            const pages = new Map();
+            const mkPage = () => {
+                const p = document.createElement('div');
+                p.className = 'ap-subpanel';
+                p.style.display = 'none';
+                return p;
+            };
+            const pageInfo = mkPage();
+            const pageHex = mkPage();
+            const pageCoresight = mkPage();
+            const pageDebug = mkPage();
+            pages.set('info', pageInfo);
+            pages.set('hex', pageHex);
+            pages.set('coresight', pageCoresight);
+            pages.set('debug', pageDebug);
+
+            panelEl.appendChild(pageInfo);
+            panelEl.appendChild(pageHex);
+            panelEl.appendChild(pageCoresight);
+            panelEl.appendChild(pageDebug);
+
+            let selected = apSubTabState.get(a.ap) || 'info';
+            if (!isMem && selected !== 'info') selected = 'info';
+
+            const debugSupport = { state: 'unknown', cpuid: null };
+            async function probeDebugSupport() {
+                if (!isMem) {
+                    debugSupport.state = 'no-mem';
+                    return debugSupport;
+                }
+                if (debugSupport.state !== 'unknown') return debugSupport;
+                try {
+                    const v = await swd.coreCpuidVia(a.ap);
+                    debugSupport.state = 'ok';
+                    debugSupport.cpuid = v >>> 0;
+                } catch (e) {
+                    debugSupport.state = 'fail';
+                    debugSupport.cpuid = null;
+                }
+                return debugSupport;
+            }
+
+            const subBtnById = new Map();
+            const addSubTab = (id, title, enabled = true) => {
+                const btn = document.createElement('button');
+                btn.className = 'ap-subtab' + ((selected === id) ? ' active' : '');
+                btn.textContent = title;
+                btn.disabled = !enabled;
+                btn.onclick = async () => {
+                    if (btn.disabled) return;
+                    await selectSubTab(id);
+                };
+                subTabsEl.appendChild(btn);
+                subBtnById.set(id, btn);
+            };
+
+            addSubTab('info', 'Info', true);
+            addSubTab('hex', 'Hex dump', isMem);
+            addSubTab('coresight', 'CoreSight', isMem);
+            addSubTab('debug', 'Debugging', isMem);
+
+            async function selectSubTab(id) {
+                if (!isMem && id !== 'info') id = 'info';
+                selected = id;
+                apSubTabState.set(a.ap, id);
+                for (const [k, p] of pages.entries()) {
+                    p.style.display = (k === id) ? 'block' : 'none';
+                }
+                for (const [k, b] of subBtnById.entries()) {
+                    if (k === id) b.classList.add('active');
+                    else b.classList.remove('active');
+                }
+                if (id === 'debug') {
+                    await probeDebugSupport();
+                    renderDebugSupportBanner();
+                }
+            }
+
+            function fmtMaybeU32(v) {
+                if (v === null || v === undefined) return '-';
+                return u32ToHex(v >>> 0);
+            }
+
+            const apInfoBox = document.createElement('div');
+            apInfoBox.style.whiteSpace = 'pre-wrap';
+            apInfoBox.style.marginTop = '8px';
+            apInfoBox.style.padding = '8px';
+            apInfoBox.style.border = '1px solid #374151';
+            apInfoBox.style.borderRadius = '6px';
+            apInfoBox.style.background = '#0b1220';
+            apInfoBox.textContent = '(not loaded)';
+
+            async function refreshApInfo() {
+                const lines = [];
+                lines.push(`AP${a.ap}`);
+                lines.push(`APIDR: ${u32ToHex(a.idr)} (${t})`);
+                if (info) {
+                    lines.push(`  REV=${info.rev}  JEP106(designer)=0x${info.designer.toString(16)}  CLASS=0x${info.ap_class.toString(16)}  VAR=0x${info.variant.toString(16)}  TYPE=0x${info.type.toString(16)}`);
+                }
+                lines.push(`BASE:  ${baseStr}`);
+
+                try {
+                    const idrNow = await swd.apRead(a.ap, AP_IDR, true);
+                    const baseNow = await swd.apRead(a.ap, AP_BASE, true);
+                    let cfgNow = null;
+                    try { cfgNow = await swd.apRead(a.ap, 0xF4, true); } catch (e) { cfgNow = null; }
+                    lines.push('');
+                    lines.push('Live AP regs:');
+                    lines.push(`  IDR (0xFC):  ${u32ToHex(idrNow)}`);
+                    lines.push(`  BASE(0xF8):  ${u32ToHex(baseNow)}`);
+                    lines.push(`  CFG (0xF4):  ${fmtMaybeU32(cfgNow)}`);
+                    if (isMem) {
+                        let cswNow = null;
+                        try { cswNow = await swd.apRead(a.ap, 0x00, true); } catch (e) { cswNow = null; }
+                        lines.push(`  CSW (0x00):  ${fmtMaybeU32(cswNow)}`);
+                    }
+                } catch (e) {
+                    lines.push('');
+                    lines.push(`Live AP regs: read failed (${e.message})`);
+                }
+
+                apInfoBox.textContent = lines.join('\n');
+            }
+
+            const ops = document.createElement('div');
+            ops.className = 'row';
+
+            const btnRefreshInfo = document.createElement('button');
+            btnRefreshInfo.textContent = 'Refresh info';
+            btnRefreshInfo.onclick = async () => {
+                try {
+                    await refreshApInfo();
+                } catch (e) {
+                    apInfoBox.textContent = `Refresh failed: ${e.message}`;
+                }
+            };
+
+            const regOff = document.createElement('input');
+            regOff.id = 'apRegOffInput';
+            regOff.value = '0xFC';
+            regOff.style.width = '90px';
+
+            const regBtn = document.createElement('button');
+            regBtn.textContent = 'Read AP reg';
+            regBtn.onclick = async () => {
+                try {
+                    const off = parseHexOrDec(regOff.value) & 0xFF;
+                    const v = await swd.apRead(a.ap, off, true);
+                    logToConsole(`AP${a.ap} ReadReg off=0x${off.toString(16)} => ${u32ToHex(v)}`, 'info');
+                } catch (e) {
+                    logToConsole(`AP${a.ap} ReadReg error: ${e.message}`, 'error');
+                }
+            };
+
+            ops.appendChild(btnRefreshInfo);
+            ops.appendChild(document.createTextNode('Reg off:'));
+            ops.appendChild(regOff);
+            ops.appendChild(regBtn);
+            pageInfo.appendChild(ops);
+            pageInfo.appendChild(apInfoBox);
+
+            if (isMem) {
+                /* ============ Hex dump tab ============ */
+                const memHdr = document.createElement('div');
+                memHdr.style.marginTop = '10px';
+                memHdr.style.color = '#a3e635';
+                memHdr.style.fontWeight = '700';
+                memHdr.textContent = 'MEM-AP memory access';
+                pageHex.appendChild(memHdr);
+
+                const row1 = document.createElement('div');
+                row1.className = 'row';
+                row1.appendChild(document.createTextNode('Addr:'));
+
+                const addr = document.createElement('input');
+                addr.id = 'memAddrInput';
+                addr.value = lastMemAddrText || '0xE000ED00';
+                addr.style.width = '140px';
+
+                const b32 = document.createElement('button');
+                b32.id = 'btnRead32';
+                b32.textContent = 'Read32';
+                b32.onclick = doRead32;
+
+                row1.appendChild(addr);
+                row1.appendChild(b32);
+                pageHex.appendChild(row1);
+
+                const row2 = document.createElement('div');
+                row2.className = 'row';
+                row2.appendChild(document.createTextNode('Words:'));
+
+                const words = document.createElement('input');
+                words.id = 'memWordsInput';
+                words.value = lastMemWordsText || '16';
+                words.style.width = '70px';
+
+                const bblk = document.createElement('button');
+                bblk.id = 'btnReadBlock';
+                bblk.textContent = 'Read block';
+                bblk.onclick = doReadBlock;
+
+                row2.appendChild(words);
+                row2.appendChild(bblk);
+                pageHex.appendChild(row2);
+
+                const wbRow = document.createElement('div');
+                wbRow.className = 'row';
+
+                const dirtyLabel = document.createElement('span');
+                dirtyLabel.style.color = '#9ca3af';
+                dirtyLabel.textContent = 'Dirty: 0 words';
+
+                const wbBtn = document.createElement('button');
+                wbBtn.textContent = 'Write back';
+                wbBtn.onclick = async () => {
+                    try {
+                        const editor = apHexEditors.get(a.ap);
+                        if (!editor) throw new Error('No hex editor instance');
+                        if (!editor.isDirty()) {
+                            logToConsole(`AP${a.ap} write-back: nothing to write`, 'info');
+                            return;
+                        }
+                        const base = editor.baseAddr >>> 0;
+                        const bytes = editor.getData();
+                        if ((base & 3) !== 0 || (bytes.length & 3) !== 0) {
+                            throw new Error('Write-back requires 32-bit aligned base and length');
+                        }
+
+                        const ranges = editor.getDirtyWordRanges();
+                        logToConsole(`AP${a.ap} write-back: ${ranges.length} range(s)`, 'info');
+
+                        for (const rg of ranges) {
+                            const addr = (base + (rg.startWord * 4)) >>> 0;
+                            const wordsOut = [];
+                            for (let wi = 0; wi < rg.wordCount; wi++) {
+                                const bo = ((rg.startWord + wi) * 4) | 0;
+                                wordsOut.push(u32FromBytesLE(bytes, bo));
+                            }
+                            await swd.memWriteBlock32Via(a.ap, addr, wordsOut);
+                            logToConsole(`AP${a.ap} write-back: wrote ${rg.wordCount} word(s) @${u32ToHex(addr)}`, 'info');
+                        }
+
+                        editor.clearDirty();
+                        dirtyLabel.textContent = 'Dirty: 0 words';
+                    } catch (e) {
+                        logToConsole(`AP${a.ap} write-back error: ${e.message}`, 'error');
+                    }
+                };
+
+                wbRow.appendChild(wbBtn);
+                wbRow.appendChild(dirtyLabel);
+                pageHex.appendChild(wbRow);
+
+                const hexContainer = document.createElement('div');
+                pageHex.appendChild(hexContainer);
+
+                let editor = apHexEditors.get(a.ap);
+                if (!editor) {
+                    editor = new HexEditor({
+                        bytesPerRow: 16,
+                        onChange: (chg) => {
+                            const start = (editor.baseAddr + chg.start) >>> 0;
+                            const dirtyRanges = editor.getDirtyWordRanges();
+                            let dirtyWords = 0;
+                            for (const rg of dirtyRanges) dirtyWords += rg.wordCount;
+                            dirtyLabel.textContent = `Dirty: ${dirtyWords} words`;
+                            logToConsole(`AP${a.ap} hex edit: ${chg.kind} @${u32ToHex(start)} len=${chg.length}`, 'info');
+                        }
+                    });
+                    apHexEditors.set(a.ap, editor);
+                }
+                editor.render(hexContainer);
+
+                /* Update dirty label if we are re-rendering an existing editor. */
+                {
+                    const dirtyRanges = editor.getDirtyWordRanges();
+                    let dirtyWords = 0;
+                    for (const rg of dirtyRanges) dirtyWords += rg.wordCount;
+                    dirtyLabel.textContent = `Dirty: ${dirtyWords} words`;
+                }
+
+                /* ============ Debug tab ============ */
+                const coreHdr = document.createElement('div');
+                coreHdr.style.marginTop = '10px';
+                coreHdr.style.color = '#a3e635';
+                coreHdr.style.fontWeight = '700';
+                coreHdr.textContent = 'Core debug (Cortex-M)';
+                pageDebug.appendChild(coreHdr);
+
+                const dbgBanner = document.createElement('div');
+                dbgBanner.style.marginTop = '8px';
+                dbgBanner.style.color = '#9ca3af';
+                dbgBanner.textContent = 'Select the Debugging tab to probe support.';
+                pageDebug.appendChild(dbgBanner);
+
+                function renderDebugSupportBanner() {
+                    if (debugSupport.state === 'unknown') {
+                        dbgBanner.textContent = 'Probing core debug support...';
+                        return;
+                    }
+                    if (debugSupport.state === 'ok') {
+                        dbgBanner.textContent = `CPUID: ${u32ToHex(debugSupport.cpuid)} (core debug likely supported)`;
+                        return;
+                    }
+                    dbgBanner.textContent = 'Core debug not supported or access denied.';
+                }
+
+                const coreRow = document.createElement('div');
+                coreRow.className = 'row';
+                pageDebug.appendChild(coreRow);
+
+                const regDefs = [
+                    { regsel: 0x00, name: 'R0' }, { regsel: 0x01, name: 'R1' }, { regsel: 0x02, name: 'R2' }, { regsel: 0x03, name: 'R3' },
+                    { regsel: 0x04, name: 'R4' }, { regsel: 0x05, name: 'R5' }, { regsel: 0x06, name: 'R6' }, { regsel: 0x07, name: 'R7' },
+                    { regsel: 0x08, name: 'R8' }, { regsel: 0x09, name: 'R9' }, { regsel: 0x0A, name: 'R10' }, { regsel: 0x0B, name: 'R11' },
+                    { regsel: 0x0C, name: 'R12' }, { regsel: 0x0D, name: 'SP' }, { regsel: 0x0E, name: 'LR' }, { regsel: 0x0F, name: 'PC' },
+                    { regsel: 0x10, name: 'xPSR' }, { regsel: 0x11, name: 'MSP' }, { regsel: 0x12, name: 'PSP' }, { regsel: 0x14, name: 'CONTROL' },
+                ];
+
+                const regGrid = document.createElement('div');
+                regGrid.style.marginTop = '8px';
+                regGrid.style.display = 'grid';
+                regGrid.style.gridTemplateColumns = 'repeat(4, minmax(0, 1fr))';
+                regGrid.style.gap = '6px';
+
+                const regValueEls = new Map();
+                for (const r of regDefs) {
+                    const cell = document.createElement('div');
+                    cell.style.border = '1px solid #374151';
+                    cell.style.borderRadius = '6px';
+                    cell.style.background = '#0b1220';
+                    cell.style.padding = '8px 10px';
+
+                    const label = document.createElement('div');
+                    label.style.color = '#9ca3af';
+                    label.style.fontSize = '12px';
+                    label.style.fontWeight = '700';
+                    label.textContent = r.name;
+
+                    const value = document.createElement('div');
+                    value.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+                    value.style.fontSize = '13px';
+                    value.style.color = '#e5e7eb';
+                    value.textContent = '-';
+
+                    cell.appendChild(label);
+                    cell.appendChild(value);
+                    regGrid.appendChild(cell);
+                    regValueEls.set(r.regsel, value);
+                }
+
+                let regReadToken = 0;
+                const setAllRegs = (text) => {
+                    for (const el of regValueEls.values()) el.textContent = text;
+                };
+
+                async function refreshCoreRegs() {
+                    const token = ++regReadToken;
+                    setAllRegs('-');
+
+                    let dhcsr = 0;
+                    try {
+                        dhcsr = await swd.memRead32Via(a.ap, SCS_DHCSR);
+                    } catch (e) {
+                        return;
+                    }
+
+                    if ((dhcsr & SCS_DHCSR_S_HALT) === 0) {
+                        /* Reading core regs via DCRSR/DCRDR requires the core to be halted.
+                         * Show '-' when forbidden.
+                         */
+                        return;
+                    }
+
+                    for (const r of regDefs) {
+                        if (token !== regReadToken) return;
+                        const el = regValueEls.get(r.regsel);
+                        if (!el) continue;
+                        try {
+                            const v = await swd.coreRegReadVia(a.ap, r.regsel);
+                            el.textContent = u32ToHex(v);
+                        } catch (e) {
+                            el.textContent = '-';
+                        }
+                    }
+                }
+
+                const btnCpuid = document.createElement('button');
+                btnCpuid.textContent = 'CPUID';
+                btnCpuid.onclick = async () => {
+                    try {
+                        const v = await swd.coreCpuidVia(a.ap);
+                        logToConsole(`AP${a.ap} CPUID @${u32ToHex(SCS_CPUID)} => ${u32ToHex(v)}`, 'info');
+                    } catch (e) {
+                        logToConsole(`AP${a.ap} CPUID error: ${e.message}`, 'error');
+                    }
+                };
+
+                const btnHalt = document.createElement('button');
+                btnHalt.textContent = 'Halt';
+                btnHalt.onclick = async () => {
+                    try {
+                        const r = await swd.coreHaltVia(a.ap);
+                        logToConsole(`AP${a.ap} core halt: halted=${r.halted ? 1 : 0} DHCSR=${u32ToHex(r.dhcsr)}`, r.halted ? 'info' : 'error');
+                        await refreshCoreRegs();
+                    } catch (e) {
+                        logToConsole(`AP${a.ap} core halt error: ${e.message}`, 'error');
+                        setAllRegs('-');
+                    }
+                };
+
+                const btnCont = document.createElement('button');
+                btnCont.textContent = 'Continue';
+                btnCont.onclick = async () => {
+                    try {
+                        const r = await swd.coreContinueVia(a.ap);
+                        if (!r.continued) {
+                            logToConsole(`AP${a.ap} core continue: ${r.reason || 'failed'} DHCSR=${u32ToHex(r.dhcsr)}`, 'error');
+                        } else {
+                            logToConsole(`AP${a.ap} core continued: DHCSR=${u32ToHex(r.dhcsr)}`, 'info');
+                        }
+                    } catch (e) {
+                        logToConsole(`AP${a.ap} core continue error: ${e.message}`, 'error');
+                    }
+                };
+
+                const btnStep = document.createElement('button');
+                btnStep.textContent = 'Step';
+                btnStep.onclick = async () => {
+                    try {
+                        const r = await swd.coreStepVia(a.ap);
+                        if (!r.stepped) {
+                            logToConsole(`AP${a.ap} core step: ${r.reason || 'failed'} DHCSR=${u32ToHex(r.dhcsr)}`, 'error');
+                        } else {
+                            logToConsole(`AP${a.ap} core stepped: DHCSR=${u32ToHex(r.dhcsr)}`, 'info');
+                        }
+                        await refreshCoreRegs();
+                    } catch (e) {
+                        logToConsole(`AP${a.ap} core step error: ${e.message}`, 'error');
+                        setAllRegs('-');
+                    }
+                };
+
+                const btnRegs = document.createElement('button');
+                btnRegs.textContent = 'Refresh regs';
+                btnRegs.onclick = async () => {
+                    try {
+                        await refreshCoreRegs();
+                    } catch (e) {
+                        setAllRegs('-');
+                    }
+                };
+
+                coreRow.appendChild(btnCpuid);
+                coreRow.appendChild(btnHalt);
+                coreRow.appendChild(btnCont);
+                coreRow.appendChild(btnStep);
+                coreRow.appendChild(btnRegs);
+                pageDebug.appendChild(regGrid);
+
+                /* ============ CoreSight tab ============ */
+                const csHdr = document.createElement('div');
+                csHdr.style.marginTop = '10px';
+                csHdr.style.color = '#a3e635';
+                csHdr.style.fontWeight = '700';
+                csHdr.textContent = 'CoreSight ROM table';
+                pageCoresight.appendChild(csHdr);
+
+                const csRow = document.createElement('div');
+                csRow.className = 'row';
+
+                const csBaseInput = document.createElement('input');
+                csBaseInput.value = (() => {
+                    if (a.base === null || a.base === undefined) return '0xE00FF000';
+                    const base = a.base >>> 0;
+                    const present = (base & 1) !== 0;
+                    const addr = (base & 0xFFFFF000) >>> 0;
+                    return present ? u32ToHex(addr) : '0xE00FF000';
+                })();
+                csBaseInput.style.width = '140px';
+
+                const csPath = document.createElement('span');
+                csPath.style.color = '#9ca3af';
+                csPath.textContent = '';
+
+                const csOut = document.createElement('div');
+                csOut.style.marginTop = '8px';
+                csOut.style.padding = '8px';
+                csOut.style.border = '1px solid #374151';
+                csOut.style.borderRadius = '6px';
+                csOut.style.background = '#0b1220';
+                csOut.textContent = '(not scanned)';
+
+                let csTree = null;
+                const csKeyOf = (base) => `${a.ap}:${((base >>> 0) & 0xFFFFF000) >>> 0}`;
+
+                async function csBuildTreeOnce(rootBase) {
+                    const base0 = ((rootBase >>> 0) & 0xFFFFF000) >>> 0;
+                    const key = csKeyOf(base0);
+                    const cached = coresightTreeCache.get(key);
+                    if (cached) return cached;
+
+                    const maxDepth = 7;
+                    const maxNodes = 256;
+                    const visited = new Set();
+
+                    async function buildAt(baseAddr, depth) {
+                        const base = ((baseAddr >>> 0) & 0xFFFFF000) >>> 0;
+                        const node = {
+                            base,
+                            depth,
+                            cls: null,
+                            pidr: null,
+                            part: null,
+                            devarch: null,
+                            devtype: null,
+                            isRomTable: false,
+                            children: [],
+                            error: null,
+                            expanded: (depth === 0)
+                        };
+
+                        if (visited.has(base)) {
+                            node.error = 'loop';
+                            return node;
+                        }
+                        if (visited.size >= maxNodes) {
+                            node.error = 'node limit';
+                            return node;
+                        }
+                        visited.add(base);
+
+                        if (depth > maxDepth) {
+                            node.error = 'depth limit';
+                            return node;
+                        }
+
+                        try {
+                            const cls = await swd.adiGetClassVia(a.ap, base);
+                            node.cls = cls;
+                            if (cls === null) {
+                                node.error = 'bad CIDR';
+                                return node;
+                            }
+
+                            const pidr = await swd.adiGetPidrVia(a.ap, base);
+                            node.pidr = pidr;
+                            node.part = adiPartNumLookup(pidr.designer, pidr.part);
+
+                            if (cls === CIDR_CLASS_CORESIGHT) {
+                                try {
+                                    node.devarch = await swd.memRead32Via(a.ap, (base + CS_DEVARCH) >>> 0);
+                                    node.devtype = await swd.memRead32Via(a.ap, (base + CS_DEVTYPE) >>> 0);
+                                } catch (e) {
+                                    /* ignore */
+                                }
+                            }
+
+                            if (cls !== CIDR_CLASS_ROMTABLE) {
+                                return node;
+                            }
+
+                            node.isRomTable = true;
+                            const count = await swd.adiRomtableEntryCountVia(a.ap, base);
+                            for (let i = 0; i < count; i++) {
+                                const childBase = await swd.adiRomtableGetVia(a.ap, base, i);
+                                const child = await buildAt(childBase, depth + 1);
+                                child.index = i;
+                                node.children.push(child);
+                            }
+                        } catch (e) {
+                            node.error = e.message;
+                        }
+
+                        return node;
+                    }
+
+                    const tree = await buildAt(base0, 0);
+                    coresightTreeCache.set(key, tree);
+                    return tree;
+                }
+
+                function csRenderTree() {
+                    csOut.innerHTML = '';
+                    if (!csTree) {
+                        csOut.textContent = '(not scanned)';
+                        return;
+                    }
+
+                    const header = document.createElement('div');
+                    header.style.color = '#9ca3af';
+                    header.style.marginBottom = '8px';
+                    header.textContent = 'Click nodes to expand/collapse (cached; no re-scan on click).';
+                    csOut.appendChild(header);
+
+                    const list = document.createElement('div');
+                    list.style.display = 'flex';
+                    list.style.flexDirection = 'column';
+                    list.style.gap = '4px';
+
+                    const renderNode = (node, ancestorsExpanded) => {
+                        const visible = ancestorsExpanded;
+                        const row = document.createElement('div');
+                        row.style.display = visible ? 'flex' : 'none';
+                        row.style.alignItems = 'center';
+                        row.style.gap = '8px';
+                        row.style.padding = '6px 8px';
+                        row.style.border = '1px solid #1f2937';
+                        row.style.borderRadius = '6px';
+                        row.style.background = '#0f172a';
+                        row.style.cursor = (node.children && node.children.length) ? 'pointer' : 'default';
+                        row.style.paddingLeft = `${8 + (node.depth * 14)}px`;
+
+                        const twist = document.createElement('div');
+                        twist.style.width = '16px';
+                        twist.style.color = '#9ca3af';
+                        const hasKids = (node.children && node.children.length);
+                        twist.textContent = hasKids ? (node.expanded ? '▼' : '▶') : '•';
+
+                        const title = document.createElement('div');
+                        title.style.flex = '1';
+                        title.style.whiteSpace = 'nowrap';
+                        title.style.overflow = 'hidden';
+                        title.style.textOverflow = 'ellipsis';
+
+                        const clsTxt = (node.cls === null) ? '?' : `0x${node.cls.toString(16)}`;
+                        const clsName = (node.cls === CIDR_CLASS_ROMTABLE) ? 'ROM' : (node.cls === CIDR_CLASS_CORESIGHT ? 'CS' : '');
+                        const pn = node.part ? node.part.type : 'Unrecognized';
+                        const err = node.error ? `  (${node.error})` : '';
+                        const idx = (node.index !== undefined) ? `#${node.index} ` : '';
+                        title.textContent = `${idx}${u32ToHex(node.base)}  class=${clsTxt}${clsName ? ' ' + clsName : ''}  ${pn}${err}`;
+
+                        row.appendChild(twist);
+                        row.appendChild(title);
+
+                        if (hasKids) {
+                            row.onclick = () => {
+                                node.expanded = !node.expanded;
+                                csRenderTree();
+                            };
+                        }
+
+                        list.appendChild(row);
+
+                        const kidsVisible = visible && (!!node.expanded);
+                        if (hasKids) {
+                            for (const ch of node.children) {
+                                renderNode(ch, kidsVisible);
+                            }
+                        }
+                    };
+
+                    renderNode(csTree, true);
+                    csOut.appendChild(list);
+                }
+
+                const csBtnScan = document.createElement('button');
+                csBtnScan.textContent = 'Scan';
+                csBtnScan.onclick = async () => {
+                    try {
+                        const base = parseHexOrDec(csBaseInput.value);
+                        /* Clear any old view and force a fresh scan for this base. */
+                        csTree = null;
+                        coresightTreeCache.delete(csKeyOf(base));
+                        csOut.textContent = 'Scanning...';
+                        csTree = await csBuildTreeOnce(base);
+                        csRenderTree();
+                    } catch (e) {
+                        logToConsole(`AP${a.ap} CoreSight scan error: ${e.message}`, 'error');
+                    }
+                };
+
+                csRow.appendChild(document.createTextNode('Base:'));
+                csRow.appendChild(csBaseInput);
+                csRow.appendChild(csBtnScan);
+                pageCoresight.appendChild(csRow);
+                pageCoresight.appendChild(csOut);
+
+                /* Show cached tree if present for current base value. */
+                try {
+                    const b0 = parseHexOrDec(csBaseInput.value);
+                    const cached = coresightTreeCache.get(csKeyOf(b0));
+                    if (cached) {
+                        csTree = cached;
+                        csRenderTree();
+                    }
+                } catch (e) {
+                    /* ignore */
+                }
+            } else {
+                const memHint = document.createElement('div');
+                memHint.style.marginTop = '8px';
+                memHint.style.color = '#9ca3af';
+                memHint.textContent = 'Non MEM-AP: memory access / CoreSight / debugging tabs are unavailable.';
+                pageHex.appendChild(memHint.cloneNode(true));
+                pageCoresight.appendChild(memHint.cloneNode(true));
+                pageDebug.appendChild(memHint.cloneNode(true));
+            }
+
+            /* Initial render */
+            selectSubTab(selected);
+            refreshApInfo();
+        }
+
+        /* ============= Core UI and Connection Functions ============= */
+
+        function logToConsole(message, level = 'info') {
+            const consoleEl = document.getElementById('consoleDisplay');
+            if (!consoleEl) return;
+
+            const now = new Date().toLocaleTimeString();
+            const levelTag = level ? `[${level.toUpperCase()}]` : '';
+            const line = `${now} ${levelTag} ${message}`;
+
+            consoleLineBuffer.push(line);
+            if (consoleLineBuffer.length > MAX_CONSOLE_LINES) {
+                consoleLineBuffer.splice(0, consoleLineBuffer.length - MAX_CONSOLE_LINES);
+            }
+
+            consoleEl.textContent = consoleLineBuffer.join('\n') + '\n';
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function clearConsole() {
+            const consoleEl = document.getElementById('consoleDisplay');
+            consoleLineBuffer.length = 0;
+            if (consoleEl) consoleEl.textContent = '';
+        }
+
+        function getTadaaAudio() {
+            if (tadaaAudio) return tadaaAudio;
+
+            const embeddedB64 = (window.TADAA_MP3_B64 !== undefined) ? window.TADAA_MP3_B64 : null;
+            if (embeddedB64 && typeof embeddedB64 === 'string' && embeddedB64.length) {
+                if (!tadaaAudioUrl) {
+                    const bin = atob(embeddedB64);
+                    const u8 = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i) & 0xFF;
+                    const blob = new Blob([u8], { type: 'audio/mpeg' });
+                    tadaaAudioUrl = URL.createObjectURL(blob);
+                }
+                const a = new Audio(tadaaAudioUrl);
+                a.preload = 'auto';
+                tadaaAudio = a;
+                return a;
+            }
+
+            const a = new Audio('tadaa.mp3');
+            a.preload = 'auto';
+            tadaaAudio = a;
+            return a;
+        }
+
+        function primeTadaaAudio() {
+            if (tadaaAudioPrimed) return;
+            tadaaAudioPrimed = true;
+            try {
+                const a = getTadaaAudio();
+                a.load();
+                const oldVolume = a.volume;
+                a.volume = 0;
+                const p = a.play();
+                if (p && typeof p.then === 'function') {
+                    p.then(() => {
+                        a.pause();
+                        a.currentTime = 0;
+                        a.volume = oldVolume;
+                    }).catch(() => {
+                        a.pause();
+                        a.currentTime = 0;
+                        a.volume = oldVolume;
+                    });
+                } else {
+                    a.pause();
+                    a.currentTime = 0;
+                    a.volume = oldVolume;
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        function playTadaa() {
+            try {
+                const a = getTadaaAudio();
+                a.currentTime = 0;
+                const p = a.play();
+                if (p && typeof p.catch === 'function') {
+                    p.catch(() => { /* ignore autoplay blocking */ });
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        async function connectDevice() {
+            try {
+                const btn = document.getElementById('connectBtn');
+                const discBtn = document.getElementById('disconnectBtn');
+                const statusEl = document.getElementById('statusIndicator');
+                const devUi = document.getElementById('deviceInteraction');
+
+                btn.disabled = true;
+                logToConsole('Connecting...', 'info');
+
+                const esp = initializeEspSerial();
+                if (await esp.connect()) {
+                    logToConsole('Connected successfully', 'info');
+                    statusEl.textContent = 'Connected';
+                    statusEl.classList.add('connected');
+                    btn.disabled = true;
+                    discBtn.disabled = false;
+
+                    if (devUi) devUi.style.display = '';
+                    
+                    /* Wire up SWD Test button */
+                    const testBtn = document.getElementById('btnRunSWDTest');
+                    if (testBtn) testBtn.onclick = runSWDTest;
+
+                    const scanBtn = document.getElementById('btnScanAps');
+                    if (scanBtn) scanBtn.onclick = scanAps;
+
+                    const dpBtn = document.getElementById('btnDpDebug');
+                    if (dpBtn) dpBtn.onclick = dpDebug;
+
+                    swd = new Swd(espSerial, logToConsole);
+                } else {
+                    logToConsole('Connection failed', 'error');
+                    btn.disabled = false;
+                    if (devUi) devUi.style.display = 'none';
+                }
+            } catch (err) {
+                logToConsole(`Connection error: ${err.message}`, 'error');
+                document.getElementById('connectBtn').disabled = false;
+                const devUi = document.getElementById('deviceInteraction');
+                if (devUi) devUi.style.display = 'none';
+            }
+        }
+
+        async function disconnectDevice() {
+            try {
+                const btn = document.getElementById('connectBtn');
+                const discBtn = document.getElementById('disconnectBtn');
+                const statusEl = document.getElementById('statusIndicator');
+                const devUi = document.getElementById('deviceInteraction');
+
+                if (espSerial) {
+                    await espSerial.disconnect();
+                }
+
+                /* Stop any active cyclic detection loop. */
+                detectLoopActive = false;
+                detectLoopToken++;
+
+                swd = null;
+
+                const scanBtn = document.getElementById('btnScanAps');
+                const dpBtn = document.getElementById('btnDpDebug');
+                if (scanBtn) scanBtn.disabled = true;
+                if (dpBtn) dpBtn.disabled = true;
+
+                const pinsEl = document.getElementById('detectedPins');
+                const idsEl = document.getElementById('detectedIds');
+                const apTabsEl = document.getElementById('apTabs');
+                const apPanelEl = document.getElementById('apPanel');
+                if (pinsEl) pinsEl.textContent = '-';
+                if (idsEl) idsEl.textContent = '-';
+                if (apTabsEl) apTabsEl.innerHTML = '';
+                if (apPanelEl) apPanelEl.textContent = '(not scanned)';
+                
+                scannedAps = [];
+                activeAp = null;
+                apHexEditors.clear();
+
+                logToConsole('Disconnected', 'info');
+                statusEl.textContent = 'Disconnected';
+                statusEl.classList.remove('connected');
+                btn.disabled = false;
+                discBtn.disabled = true;
+
+                if (devUi) devUi.style.display = 'none';
+            } catch (err) {
+                logToConsole(`Disconnect error: ${err.message}`, 'error');
+            }
+        }
+
+        function initializeGpioCheckboxes() {
+            const container = document.getElementById('ioGpioCheckboxes');
+            
+            /* ESP32-C3 available GPIO pins: 0-10, 20-21 */
+            const gpios = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21];
+            
+            for (const gpio of gpios) {
+                const label = document.createElement('label');
+                label.style.display = 'flex';
+                label.style.alignItems = 'center';
+                label.style.gap = '6px';
+                label.style.cursor = 'pointer';
+                label.style.color = '#e5e7eb';
+                label.style.fontSize = '13px';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = gpio;
+                checkbox.style.cursor = 'pointer';
+                checkbox.checked = (gpio >= 20);
+                
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(`GPIO${gpio}`));
+                container.appendChild(label);
+            }
+        }
+
+        window.onload = () => {
+            logToConsole('SWD Console ready', 'info');
+            logToConsole('Click Connect to begin', 'info');
+
+            const devUi = document.getElementById('deviceInteraction');
+            if (devUi) devUi.style.display = 'none';
+            
+            /* Initialize GPIO checkboxes */
+            initializeGpioCheckboxes();
+            
+            /* Wire up connect/disconnect buttons */
+            const connectBtn = document.getElementById('connectBtn');
+            if (connectBtn) connectBtn.onclick = connectDevice;
+
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            if (disconnectBtn) disconnectBtn.onclick = disconnectDevice;
+
+            const clearBtn = document.getElementById('clearBtn');
+            if (clearBtn) clearBtn.onclick = clearConsole;
+        };
+    </script>
+</body>
+
+</html>

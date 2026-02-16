@@ -6,16 +6,22 @@ from pathlib import Path
 # constants
 PROJECT_ROOT = Path(__file__).resolve().parent
 FLASHER_ARGS_JSON = PROJECT_ROOT / "build" / "flasher_args.json"
+TADAA_MP3 = PROJECT_ROOT / "tadaa.mp3"
 
 # Paths relative to project root - all files to patch
 PATCH_FILES = [
     PROJECT_ROOT / "flasher.html",
-    PROJECT_ROOT / "cc3200.html"
+    PROJECT_ROOT / "cc3200.html",
+    PROJECT_ROOT / "swd.html"
 ]
 
 # Token markers for embedding
 BINARY_EMBED_START = "/* binary_embed_start */"
 BINARY_EMBED_END = "/* binary_embed_stop */"
+
+# Token markers for embedding audio (tadaa.mp3) in swd.html
+AUDIO_EMBED_START = "/* audio_embed_start */"
+AUDIO_EMBED_END = "/* audio_embed_stop */"
 
 
 def load_flash_config():
@@ -74,6 +80,23 @@ def inject_binary_embeds(content, binary_block):
     return replace_block(content, BINARY_EMBED_START, BINARY_EMBED_END, binary_block)
 
 
+def read_audio_b64():
+    if not TADAA_MP3.is_file():
+        return None
+    data = TADAA_MP3.read_bytes()
+    return base64.b64encode(data).decode("ascii")
+
+
+def build_audio_embed_block(mp3_b64):
+    lines = [AUDIO_EMBED_START]
+    if mp3_b64:
+        lines.append(f'window.TADAA_MP3_B64 = "{mp3_b64}";')
+    else:
+        lines.append('if (window.TADAA_MP3_B64 === undefined) window.TADAA_MP3_B64 = null;')
+    lines.append(AUDIO_EMBED_END)
+    return "\n".join(lines)
+
+
 
 def read_local_file(filename):
     """Read a local file from the project root."""
@@ -107,9 +130,18 @@ def inline_local_scripts(content):
 
 
 def main():
-    # Read binaries and build embed block
-    encoded = read_binaries()
-    binary_block = build_binary_embed_block(encoded)
+    # Read binaries and build embed block (optional)
+    encoded = {}
+    binary_block = None
+    try:
+        encoded = read_binaries()
+        binary_block = build_binary_embed_block(encoded)
+    except Exception as e:
+        print(f"Warning: binary embed disabled ({e})")
+
+    # Read audio (optional) and build embed block
+    mp3_b64 = read_audio_b64()
+    audio_block = build_audio_embed_block(mp3_b64)
     
     # Process each file in PATCH_FILES
     for patch_file in PATCH_FILES:
@@ -119,26 +151,38 @@ def main():
         
         content = patch_file.read_text(encoding="utf-8")
         injected = []
+        write_back = False
         
         # Try to inject binary embeds
-        if BINARY_EMBED_START in content:
+        if binary_block and BINARY_EMBED_START in content:
             new_content = inject_binary_embeds(content, binary_block)
             if new_content:
                 content = new_content
                 sizes = {name: len(base64.b64decode(b64)) for name, (_off, b64) in encoded.items()}
                 for name, size in sizes.items():
                     injected.append(f"binary: {name} ({size} bytes)")
+                write_back = True
+
+        # Inject audio embed only for swd.html (used primarily for the static output)
+        if patch_file.name.lower() == "swd.html" and AUDIO_EMBED_START in content:
+            new_content = replace_block(content, AUDIO_EMBED_START, AUDIO_EMBED_END, audio_block)
+            if new_content:
+                content = new_content
+                if mp3_b64:
+                    injected.append(f"audio: {TADAA_MP3.name} ({TADAA_MP3.stat().st_size} bytes)")
+                else:
+                    injected.append(f"audio: {TADAA_MP3.name} (missing, left external)")
         
         # Write back and report if modified
         if injected:
-            patch_file.write_text(content, encoding="utf-8")
             print(f"{patch_file.name}:")
             for item in injected:
                 print(f"  - {item}")
 
-        content = patch_file.read_text(encoding="utf-8")
-        
-        # Inline local scripts
+        if write_back and injected:
+            patch_file.write_text(content, encoding="utf-8")
+
+        # Inline local scripts (from in-memory content)
         static_content = inline_local_scripts(content)
         
         # Create output filename with .static.html suffix

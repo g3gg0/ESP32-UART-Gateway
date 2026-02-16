@@ -8,9 +8,15 @@ class EspSerial {
         this.data_cbr = null; /* Raw UART-like bytes */
         this.config_cbr = null; /* Config packets */
         this.log_cbr = null; /* Parsed ESP log packets */
+        this.swd_cbr = null; /* Parsed SWD response packets */
         this.disconnect_cbr = null; /* Port disconnect callback */
         this._disconnectHandler = null;
         this._disconnecting = false;
+
+        /* SWD request/response tracking (new SWD sub-protocol) */
+        this._swdSeq = 1;
+        this._swdPending = new Map(); /* seq -> { resolve, reject, timer } */
+        this._swdDefaultTimeoutMs = 1500;
 
         /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
         this.EXTMODE_MAGIC = new Uint8Array([
@@ -27,6 +33,7 @@ class EspSerial {
         this.PACKET_TYPE_CONFIG = 0x01;
         this.PACKET_TYPE_CONTROL = 0x02;
         this.PACKET_TYPE_LOG = 0x03;
+        this.UART_PACKET_TYPE_SWD = 0x04;
 
         this.CTRL_CMD_SIZE = 16;
         this.LOGMSG_MAX_LEN = 256;
@@ -51,8 +58,18 @@ class EspSerial {
         this.log_cbr = callback;
     }
 
+    setSwdCallback(callback) {
+        this.swd_cbr = callback;
+    }
+
     setDisconnectCallback(callback) {
         this.disconnect_cbr = callback;
+    }
+
+    consoleLogHex(prefix, data) {
+        if (!data) return;
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        console.log(`${prefix} [${bytes.length} bytes]`);
     }
 
     async flushSerialData(durationMs) {
@@ -120,8 +137,8 @@ class EspSerial {
 
             /* Send extended mode activation magic */
             const magic = this.buildExtModeActivationPacket();
-            consoleLogHex('TX ExtMode Magic:', magic);
             await this.sendPacket(magic, 'ExtMode Magic');
+            
             logToConsole('ESP Serial: Extended mode activation sent', 'info');
             this.extendedMode = true;
 
@@ -197,12 +214,30 @@ class EspSerial {
     }
 
     notifyDisconnect(info) {
+        this._rejectAllSwdPending(new Error('Disconnected'));
         if (this.disconnect_cbr) {
             try {
                 this.disconnect_cbr(info);
             } catch (err) {
                 logToConsole(`Disconnect callback error: ${err.message}`, 'info');
             }
+        }
+    }
+
+    _rejectAllSwdPending(err) {
+        if (!this._swdPending || this._swdPending.size === 0) return;
+        for (const [seq, entry] of this._swdPending.entries()) {
+            if (entry && entry.timer) {
+                clearTimeout(entry.timer);
+            }
+            if (entry && entry.reject) {
+                try {
+                    entry.reject(err);
+                } catch (e) {
+                    /* ignore */
+                }
+            }
+            this._swdPending.delete(seq);
         }
     }
 
@@ -337,6 +372,61 @@ class EspSerial {
             }
         };
 
+        const emitSwd = (payload) => {
+            if (!payload || payload.length < 12) {
+                return;
+            }
+
+            const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+            const magic = view.getUint16(0, true);
+            if (magic !== 0xCAFE) {
+                return;
+            }
+
+            const op = payload[2] >>> 0;
+            const status = payload[3] >>> 0;
+            const seq = view.getUint16(4, true) >>> 0;
+            const swdio_gpio = payload[6] >>> 0;
+            const swclk_gpio = payload[7] >>> 0;
+            const ack = payload[8] >>> 0;
+            const data_len = view.getUint16(10, true) >>> 0;
+
+            if (payload.length < 12 + data_len) {
+                return;
+            }
+
+            const data = payload.slice(12, 12 + data_len);
+            const packet = {
+                type: 'swd_packet',
+                op,
+                req_op: (op & 0x7F) >>> 0,
+                is_response: ((op & 0x80) !== 0),
+                status,
+                seq,
+                swdio_gpio,
+                swclk_gpio,
+                ack,
+                data,
+                raw: payload
+            };
+
+            const pending = this._swdPending.get(seq);
+            if (pending) {
+                if (pending.timer) clearTimeout(pending.timer);
+                this._swdPending.delete(seq);
+                pending.resolve(packet);
+                return;
+            }
+
+            if (this.swd_cbr) {
+                try {
+                    this.swd_cbr(packet);
+                } catch (err) {
+                    logToConsole(`SWD callback error: ${err.message}`, 'info');
+                }
+            }
+        };
+
         if (!this.extendedMode) {
             /* In non-extended mode, just pass through all data */
             if (this.rxBuffer.length > 0) {
@@ -380,11 +470,90 @@ class EspSerial {
             } else if (type === this.PACKET_TYPE_LOG) {
                 /* Type 0x03: Log message */
                 emitLog(payload);
+            } else if (type === this.UART_PACKET_TYPE_SWD) {
+                /* Type 0x04: SWD binary responses */
+                emitSwd(payload);
             } else {
                 /* Unknown packet type, pass through as data */
                 emitData(payload);
             }
         }
+    }
+
+    _nextSwdSeq() {
+        /* seq=0 reserved for legacy responses */
+        let seq = this._swdSeq & 0xFFFF;
+        if (seq === 0) seq = 1;
+        this._swdSeq = (seq + 1) & 0xFFFF;
+        if (this._swdSeq === 0) this._swdSeq = 1;
+        return seq;
+    }
+
+    _buildSwdRequestPayload(op, flags, seq, args) {
+        const a = args ? (args instanceof Uint8Array ? args : new Uint8Array(args)) : new Uint8Array(0);
+        const out = new Uint8Array(8 + a.length);
+        /* magic 0xCAFE little-endian */
+        out[0] = 0xFE;
+        out[1] = 0xCA;
+        out[2] = op & 0xFF;
+        out[3] = flags & 0xFF;
+        out[4] = seq & 0xFF;
+        out[5] = (seq >> 8) & 0xFF;
+        out[6] = 0;
+        out[7] = 0;
+        if (a.length) out.set(a, 8);
+        return out;
+    }
+
+    async swdRequest(op, args, options) {
+        if (!this.port) throw new Error('Port not connected');
+        const opt = options || {};
+        const flags = (opt.flags || 0) & 0xFF;
+        const timeoutMs = opt.timeoutMs || this._swdDefaultTimeoutMs;
+        const seq = (opt.seq !== undefined) ? (opt.seq & 0xFFFF) : this._nextSwdSeq();
+
+        if (this._swdPending.has(seq)) {
+            throw new Error(`SWD seq collision: ${seq}`);
+        }
+
+        const payload = this._buildSwdRequestPayload(op, flags, seq, args);
+        const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_SWD);
+
+        return new Promise(async (resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._swdPending.delete(seq);
+                reject(new Error(`SWD timeout (op=0x${op.toString(16)}, seq=${seq})`));
+            }, timeoutMs);
+
+            this._swdPending.set(seq, { resolve, reject, timer });
+
+            try {
+                await this.sendPacket(packet, `SWD op=0x${op.toString(16)} seq=${seq}`);
+            } catch (err) {
+                clearTimeout(timer);
+                this._swdPending.delete(seq);
+                reject(err);
+            }
+        });
+    }
+
+    waitForSwdResponse(seq, timeoutMs) {
+        if (!this.port) throw new Error('Port not connected');
+        const s = (seq >>> 0) & 0xFFFF;
+        const t = timeoutMs || this._swdDefaultTimeoutMs;
+
+        if (this._swdPending.has(s)) {
+            throw new Error(`SWD seq already pending: ${s}`);
+        }
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._swdPending.delete(s);
+                reject(new Error(`SWD timeout (seq=${s})`));
+            }, t);
+
+            this._swdPending.set(s, { resolve, reject, timer });
+        });
     }
 
     async readFromPort() {
@@ -401,7 +570,7 @@ class EspSerial {
 
                     if (value) {
                         /* Log raw RX bytes at lowest level */
-                        consoleLogHex('RX:', value);
+                        this.consoleLogHex('RX:', value);
                         this.processEspPackets(value);
                     }
                 } catch (err) {
@@ -450,7 +619,7 @@ class EspSerial {
             const packet = this.buildPacket(chunk, this.PACKET_TYPE_DATA);
 
             /* Log raw TX bytes at lowest level */
-            consoleLogHex('TX Data:', packet);
+            this.consoleLogHex('TX Data:', packet);
             await writer.write(packet);
             offset += chunkSize;
         }
@@ -461,7 +630,7 @@ class EspSerial {
         try {
             const writer = this.port.writable.getWriter();
             try {
-                consoleLogHex(`TX ${label}:`, packet);
+                this.consoleLogHex(`TX ${label}:`, packet);
                 await writer.write(packet);
             } finally {
                 writer.releaseLock();
@@ -563,6 +732,26 @@ class EspSerial {
             writer.releaseLock();
         } catch (err) {
             logToConsole(`Config send error: ${err.message}`, 'info');
+        }
+    }
+
+    async swdTest(ioMask) {
+        if (!this.port) throw new Error('Port not connected');
+        try {
+            /* Build SWD test command payload: 4 bytes for one uint32_t IO candidate mask */
+            const payload = new Uint8Array(4);
+
+            const io = ioMask >>> 0;
+            payload[0] = io & 0xFF;
+            payload[1] = (io >> 8) & 0xFF;
+            payload[2] = (io >> 16) & 0xFF;
+            payload[3] = (io >> 24) & 0xFF;
+
+            const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_SWD);
+            await this.sendPacket(packet, 'SWD Test');
+        } catch (err) {
+            logToConsole(`SWD test error: ${err.message}`, 'info');
+            throw err;
         }
     }
 }
