@@ -557,7 +557,7 @@ class EspSerial {
 
                     if (value) {
                         /* Log raw RX bytes at lowest level */
-                        this.consoleLogHex('RX:', value);
+                        //this.consoleLogHex('RX:', value);
                         this.processEspPackets(value);
                     }
                 } catch (err) {
@@ -606,7 +606,7 @@ class EspSerial {
             const packet = this.buildPacket(chunk, this.PACKET_TYPE_DATA);
 
             /* Log raw TX bytes at lowest level */
-            this.consoleLogHex('TX Data:', packet);
+            //this.consoleLogHex('TX Data:', packet);
             await writer.write(packet);
             offset += chunkSize;
         }
@@ -617,7 +617,7 @@ class EspSerial {
         try {
             const writer = this.port.writable.getWriter();
             try {
-                this.consoleLogHex(`TX ${label}:`, packet);
+                //this.consoleLogHex(`TX ${label}:`, packet);
                 await writer.write(packet);
             } finally {
                 writer.releaseLock();

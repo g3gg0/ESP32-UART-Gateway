@@ -266,8 +266,6 @@ static uint8_t swd_transfer(AppFSM *const ctx, bool ap, bool write, uint8_t a23,
 
     if (ack != 0x01)
     {
-        // notification_message(ctx->notification, &sequence_reset_blue);
-        // notification_message(ctx->notification, &sequence_set_red_255);
         return ack;
     }
 
@@ -300,14 +298,11 @@ static uint8_t swd_transfer(AppFSM *const ctx, bool ap, bool write, uint8_t a23,
 
         if (parity != __builtin_parity(*data))
         {
-            // notification_message(ctx->notification, &sequence_reset_blue);
-            // notification_message(ctx->notification, &sequence_set_red_255);
             return 8;
         }
     }
     swd_set_data(ctx, false);
     swd_configure_pins(ctx, true);
-    // notification_message(ctx->notification, &sequence_reset_blue);
 
     return ack;
 }
