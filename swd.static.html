@@ -566,7 +566,7 @@ class EspSerial {
 
                     if (value) {
                         /* Log raw RX bytes at lowest level */
-                        this.consoleLogHex('RX:', value);
+                        //this.consoleLogHex('RX:', value);
                         this.processEspPackets(value);
                     }
                 } catch (err) {
@@ -615,7 +615,7 @@ class EspSerial {
             const packet = this.buildPacket(chunk, this.PACKET_TYPE_DATA);
 
             /* Log raw TX bytes at lowest level */
-            this.consoleLogHex('TX Data:', packet);
+            //this.consoleLogHex('TX Data:', packet);
             await writer.write(packet);
             offset += chunkSize;
         }
@@ -626,7 +626,7 @@ class EspSerial {
         try {
             const writer = this.port.writable.getWriter();
             try {
-                this.consoleLogHex(`TX ${label}:`, packet);
+                //this.consoleLogHex(`TX ${label}:`, packet);
                 await writer.write(packet);
             } finally {
                 writer.releaseLock();
@@ -4341,6 +4341,14 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                             logToConsole(`AP${a.ap} core continue: ${r.reason || 'failed'} DHCSR=${u32ToHex(r.dhcsr)}`, 'error');
                         } else {
                             logToConsole(`AP${a.ap} core continued: DHCSR=${u32ToHex(r.dhcsr)}`, 'info');
+
+                            /* When running, registers/PC/disasm are no longer valid. */
+                            try { endRegOverlay(); } catch (e) { /* ignore */ }
+                            setAllRegs('-');
+                            lastPc = null;
+                            lastDhcsr = 0;
+                            disasmBox.style.display = 'block';
+                            disasmView.textContent = '-';
                         }
                     } catch (e) {
                         logToConsole(`AP${a.ap} core continue error: ${e.message}`, 'error');
