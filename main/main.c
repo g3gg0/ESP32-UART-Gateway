@@ -1,4 +1,6 @@
 
+#include <string.h>
+
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nvs.h"
@@ -10,7 +12,7 @@
 #include "freertos/queue.h"
 #include "uart_gateway.h"
 #include "led.h"
-#include <string.h>
+
 
 #define TAG "ESP32-UART"
 

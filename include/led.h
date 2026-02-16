@@ -1,5 +1,5 @@
-#ifndef LED_H
-#define LED_H
+#pragma once
+
 
 #include "esp_err.h"
 #include "uart_gateway.h"
@@ -13,4 +13,3 @@ void led_stop(void);
 /* Signal UART activity - triggers active blink for a duration */
 void led_signal_uart_activity(void);
 
-#endif /* LED_H */

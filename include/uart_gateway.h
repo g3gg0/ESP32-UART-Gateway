@@ -43,6 +43,7 @@ typedef enum
     UART_PACKET_TYPE_CONFIG = 0x01,  /* USB config struct */
     UART_PACKET_TYPE_CONTROL = 0x02, /* Control commands (B:1234, R:0) */
     UART_PACKET_TYPE_LOG = 0x03,     /* Log messages from ESP32 */
+    UART_PACKET_TYPE_SWD = 0x04,     /* SWD commands */
     UART_PACKET_TYPE_EXTMODE = 0x0A  /* Extended mode activation packet */
 } uart_packet_type_t;
 
@@ -73,6 +74,12 @@ typedef struct
     uint8_t led_gpio;
     uint8_t extended_mode;
 } uartgw_config_t;
+
+
+typedef struct __attribute__((packed))
+{
+    uint32_t io_mask;
+} swd_cmd_t;
 
 typedef struct
 {

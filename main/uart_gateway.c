@@ -1,3 +1,8 @@
+
+#include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
+
 #include "uart_gateway.h"
 #include "led.h"
 #include "esp_log.h"
@@ -10,9 +15,7 @@
 #include "freertos/stream_buffer.h"
 #include "nvs_flash.h"
 #include "nvs.h"
-#include <string.h>
-#include <stdarg.h>
-#include <stdio.h>
+#include "swd.h"
 
 #define TAG "UART_GATEWAY"
 #define NVS_NAMESPACE "uart_config"
@@ -23,6 +26,152 @@
 #define NVS_KEY_CONTROL_GPIO "control_gpio"
 #define NVS_KEY_LED_GPIO "led_gpio"
 #define NVS_KEY_EXTENDED_MODE "ext_mode"
+
+/* ===== SWD UART sub-protocol (inside UART_PACKET_TYPE_SWD payload) =====
+ *
+ * Legacy mode (still supported for compatibility):
+ * - payload length 4: uint32_t io_mask
+ * - payload length 8: uint32_t swd_mask + uint32_t swc_mask (ORed)
+ *   -> runs a scan once (detect pins + logs), no binary result previously.
+ *
+ * New mode:
+ * - payload begins with swd_uart_req_hdr_t (magic + op + flags + seq)
+ * - firmware always enqueues a binary response packet with op|0x80.
+ */
+
+#define SWD_UART_MAGIC 0xCAFEu
+
+typedef enum
+{
+    SWD_UART_OP_DETECT_PINS = 0x01,
+    SWD_UART_OP_DEINIT = 0x02,
+    SWD_UART_OP_TRANSFER = 0x03,
+    SWD_UART_OP_AP_READ = 0x10,
+    SWD_UART_OP_AP_READ_SINGLE = 0x11,
+    SWD_UART_OP_AP_WRITE = 0x12,
+} swd_uart_op_t;
+
+typedef enum
+{
+    SWD_UART_STATUS_OK = 0x00,
+    SWD_UART_STATUS_BAD_LEN = 0x01,
+    SWD_UART_STATUS_BAD_OP = 0x02,
+    SWD_UART_STATUS_NOT_INITIALIZED = 0x03,
+    SWD_UART_STATUS_PARITY = 0x04,
+    SWD_UART_STATUS_INTERNAL = 0x7F,
+} swd_uart_status_t;
+
+typedef enum
+{
+    SWD_UART_FLAG_VERBOSE_LOG = 0x01,
+} swd_uart_flags_t;
+
+typedef struct __attribute__((packed))
+{
+    uint16_t magic; /* SWD_UART_MAGIC */
+    uint8_t op;
+    uint8_t flags;
+    uint16_t seq;
+    uint16_t reserved;
+} swd_uart_req_hdr_t;
+
+typedef struct __attribute__((packed))
+{
+    uint16_t magic; /* SWD_UART_MAGIC */
+    uint8_t op;     /* request op | 0x80 */
+    uint8_t status; /* swd_uart_status_t */
+    uint16_t seq;
+    uint8_t swdio_gpio; /* final active SWDIO GPIO or 0xFF */
+    uint8_t swclk_gpio; /* final active SWCLK GPIO or 0xFF */
+    uint8_t ack;        /* SWD ACK (1/2/4) or 8 for parity mismatch, 0 if N/A */
+    uint8_t reserved;
+    uint16_t data_len;
+} swd_uart_rsp_hdr_t;
+
+typedef struct __attribute__((packed))
+{
+    uint32_t dpidr;
+    uint32_t targetid;
+    uint8_t dpidr_ok;
+    uint8_t targetid_ok;
+    uint8_t detected_device;
+    uint8_t reserved;
+} swd_uart_detect_rsp_t;
+
+static bool swd_session_active = false;
+static volatile uint32_t send_message_suppress = 0;
+
+/* SWD session context (must be declared before swd_queue_response). */
+static AppFSM swd_ctx;
+
+static inline void send_message_suppress_push(void)
+{
+    send_message_suppress++;
+}
+
+static inline void send_message_suppress_pop(void)
+{
+    if (send_message_suppress > 0)
+    {
+        send_message_suppress--;
+    }
+}
+
+static uint32_t read_u32_le(const uint8_t *p)
+{
+    return ((uint32_t)p[0]) |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static void write_u32_le(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v & 0xFF);
+    p[1] = (uint8_t)((v >> 8) & 0xFF);
+    p[2] = (uint8_t)((v >> 16) & 0xFF);
+    p[3] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+static esp_err_t swd_queue_response(uint8_t req_op, uint16_t seq, swd_uart_status_t status,
+                                    uint8_t ack, const uint8_t *data, uint16_t data_len,
+                                    bool include_pins)
+{
+    uint8_t swdio = 0xFF;
+    uint8_t swclk = 0xFF;
+    if (include_pins && swd_session_active)
+    {
+        swd_get_active_pins(&swd_ctx, &swdio, &swclk);
+    }
+
+    size_t packet_size = UART_PACKET_HEADER_SIZE + sizeof(swd_uart_rsp_hdr_t) + data_len;
+    uart_packet_header_t *packet = (uart_packet_header_t *)malloc(packet_size);
+    if (!packet)
+    {
+        return ESP_ERR_NO_MEM;
+    }
+
+    packet->length = (uint16_t)packet_size;
+    packet->type = UART_PACKET_TYPE_SWD;
+
+    swd_uart_rsp_hdr_t *rsp = (swd_uart_rsp_hdr_t *)PTR_BEHIND(packet);
+    rsp->magic = SWD_UART_MAGIC;
+    rsp->op = (uint8_t)(req_op | 0x80);
+    rsp->status = (uint8_t)status;
+    rsp->seq = seq;
+    rsp->swdio_gpio = swdio;
+    rsp->swclk_gpio = swclk;
+    rsp->ack = ack;
+    rsp->reserved = 0;
+    rsp->data_len = data_len;
+
+    if (data_len && data)
+    {
+        memcpy(((uint8_t *)rsp) + sizeof(*rsp), data, data_len);
+    }
+
+    return queue_packet(packet);
+}
 
 /* Magic bytes: type 0x000A packet with 8-byte payload (length=12 includes header, type=0x000A in little-endian) */
 const uint8_t uart_extmode_magic[UART_EXTMODE_MAGIC_SIZE] = {
@@ -45,6 +194,7 @@ static TaskHandle_t uart_write_task_handle = NULL;
 static uint8_t cdc_read_buffer[CDC_BUFFER_SIZE];
 static uint8_t uart_write_buffer[UART_BUFFER_SIZE];
 static uint8_t uart_read_buffer[UART_BUFFER_SIZE];
+/* swd_ctx declared above */
 
 uartgw_config_t uart_current_config;
 
@@ -108,6 +258,11 @@ void send_message(const char *fmt, ...)
     if (fmt == NULL)
     {
         ESP_LOGE(TAG, "send_message: fmt is NULL");
+        return;
+    }
+
+    if (send_message_suppress)
+    {
         return;
     }
 
@@ -1180,6 +1335,258 @@ static void cdc_read_task(void *pvParameters)
                         case UART_PACKET_TYPE_EXTMODE:
                             send_message("Extended mode activated");
                             break;
+
+
+                        case UART_PACKET_TYPE_SWD:
+                        {
+                            /* Legacy compatibility: payload is just io_mask (4 bytes) or swd_mask+swc_mask (8 bytes) */
+                            if (payload_needed == 4 || payload_needed == 8)
+                            {
+                                uint32_t io_mask = 0;
+                                if (payload_needed == 8)
+                                {
+                                    uint32_t swd_mask = read_u32_le(&payload_buffer[0]);
+                                    uint32_t swc_mask = read_u32_le(&payload_buffer[4]);
+                                    io_mask = swd_mask | swc_mask;
+                                }
+                                else
+                                {
+                                    io_mask = read_u32_le(payload_buffer);
+                                }
+
+                                send_message("SWD legacy scan: io_mask=0x%08lX", io_mask);
+
+                                if (swd_session_active)
+                                {
+                                    swd_deinit(&swd_ctx);
+                                    memset(&swd_ctx, 0, sizeof(swd_ctx));
+                                    swd_session_active = false;
+                                }
+
+                                swd_init(&swd_ctx, io_mask);
+                                swd_session_active = true;
+                                swd_do_scan(&swd_ctx);
+
+                                swd_uart_detect_rsp_t det = {
+                                    .dpidr = swd_ctx.dp_regs.dpidr,
+                                    .targetid = swd_ctx.dp_regs.targetid,
+                                    .dpidr_ok = (uint8_t)(swd_ctx.dp_regs.dpidr_ok ? 1 : 0),
+                                    .targetid_ok = (uint8_t)(swd_ctx.dp_regs.targetid_ok ? 1 : 0),
+                                    .detected_device = (uint8_t)(swd_ctx.detected_device ? 1 : 0),
+                                    .reserved = 0,
+                                };
+
+                                esp_err_t qerr = swd_queue_response(SWD_UART_OP_DETECT_PINS, 0, SWD_UART_STATUS_OK, 0,
+                                                                   (const uint8_t *)&det, (uint16_t)sizeof(det), true);
+                                if (qerr != ESP_OK)
+                                {
+                                    send_message("SWD legacy: failed to queue response: %s", esp_err_to_name(qerr));
+                                }
+                                break;
+                            }
+
+                            /* New protocol: magic + op + flags + seq */
+                            if (payload_needed < sizeof(swd_uart_req_hdr_t))
+                            {
+                                send_message("SWD payload too short for hdr: %u", (unsigned)payload_needed);
+                                (void)swd_queue_response(0x00, 0, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, false);
+                                break;
+                            }
+
+                            const swd_uart_req_hdr_t *req = (const swd_uart_req_hdr_t *)payload_buffer;
+                            if (req->magic != SWD_UART_MAGIC)
+                            {
+                                send_message("SWD bad magic: 0x%04X (len=%u)", req->magic, (unsigned)payload_needed);
+                                (void)swd_queue_response(req->op, req->seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, false);
+                                break;
+                            }
+
+                            const uint8_t *args = payload_buffer + sizeof(*req);
+                            size_t arg_len = payload_needed - sizeof(*req);
+                            uint8_t op = req->op;
+                            uint8_t flags = req->flags;
+                            uint16_t seq = req->seq;
+
+                            if (flags & SWD_UART_FLAG_VERBOSE_LOG)
+                            {
+                                send_message("SWD op=0x%02X seq=%u len=%u", op, (unsigned)seq, (unsigned)arg_len);
+                            }
+
+                            switch (op)
+                            {
+                            case SWD_UART_OP_DETECT_PINS:
+                            {
+                                if (arg_len < 4)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+                                    break;
+                                }
+
+                                uint32_t io_mask = read_u32_le(args);
+                                if (flags & SWD_UART_FLAG_VERBOSE_LOG)
+                                {
+                                    send_message("SWD detect: io_mask=0x%08lX", io_mask);
+                                }
+
+                                bool quiet = ((flags & SWD_UART_FLAG_VERBOSE_LOG) == 0);
+                                if (quiet)
+                                {
+                                    send_message_suppress_push();
+                                }
+
+                                if (swd_session_active)
+                                {
+                                    swd_deinit(&swd_ctx);
+                                    memset(&swd_ctx, 0, sizeof(swd_ctx));
+                                    swd_session_active = false;
+                                }
+
+                                swd_init(&swd_ctx, io_mask);
+                                swd_session_active = true;
+                                swd_do_scan(&swd_ctx);
+
+                                swd_uart_detect_rsp_t det = {
+                                    .dpidr = swd_ctx.dp_regs.dpidr,
+                                    .targetid = swd_ctx.dp_regs.targetid,
+                                    .dpidr_ok = (uint8_t)(swd_ctx.dp_regs.dpidr_ok ? 1 : 0),
+                                    .targetid_ok = (uint8_t)(swd_ctx.dp_regs.targetid_ok ? 1 : 0),
+                                    .detected_device = (uint8_t)(swd_ctx.detected_device ? 1 : 0),
+                                    .reserved = 0,
+                                };
+
+                                if (quiet)
+                                {
+                                    send_message_suppress_pop();
+                                }
+
+                                esp_err_t qerr = swd_queue_response(op, seq, SWD_UART_STATUS_OK, 0,
+                                                                   (const uint8_t *)&det, (uint16_t)sizeof(det), true);
+                                if (qerr != ESP_OK)
+                                {
+                                    ESP_LOGE(TAG, "SWD: failed to queue detect response: %s", esp_err_to_name(qerr));
+                                }
+                                break;
+                            }
+
+                            case SWD_UART_OP_DEINIT:
+                            {
+                                if (!swd_session_active)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, false);
+                                    break;
+                                }
+                                swd_deinit(&swd_ctx);
+                                memset(&swd_ctx, 0, sizeof(swd_ctx));
+                                swd_session_active = false;
+                                (void)swd_queue_response(op, seq, SWD_UART_STATUS_OK, 0, NULL, 0, false);
+                                break;
+                            }
+
+                            case SWD_UART_OP_TRANSFER:
+                            {
+                                if (!swd_session_active)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
+                                    break;
+                                }
+                                if (arg_len < 8)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+                                    break;
+                                }
+
+                                bool ap = args[0] ? true : false;
+                                bool write = args[1] ? true : false;
+                                uint8_t a23 = args[2] & 0x03;
+                                uint32_t data = read_u32_le(&args[4]);
+
+                                uint8_t ack = swd_uart_transfer(&swd_ctx, ap, write, a23, &data);
+                                uint8_t out[4];
+                                write_u32_le(out, data);
+
+                                swd_uart_status_t st = SWD_UART_STATUS_OK;
+                                if (ack == 8)
+                                {
+                                    st = SWD_UART_STATUS_PARITY;
+                                }
+
+                                esp_err_t qerr = swd_queue_response(op, seq, st, ack, out, 4, true);
+                                if (qerr != ESP_OK)
+                                {
+                                    ESP_LOGE(TAG, "SWD: failed to queue transfer response: %s", esp_err_to_name(qerr));
+                                }
+                                break;
+                            }
+
+                            case SWD_UART_OP_AP_READ:
+                            case SWD_UART_OP_AP_READ_SINGLE:
+                            {
+                                if (!swd_session_active)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
+                                    break;
+                                }
+                                if (arg_len < 4)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+                                    break;
+                                }
+
+                                uint8_t ap = args[0];
+                                uint8_t ap_off = args[1];
+                                uint32_t data = 0;
+                                uint8_t ack = 0;
+                                if (op == SWD_UART_OP_AP_READ_SINGLE)
+                                {
+                                    ack = swd_uart_read_ap_single(&swd_ctx, ap, ap_off, &data);
+                                }
+                                else
+                                {
+                                    ack = swd_uart_read_ap(&swd_ctx, ap, ap_off, &data);
+                                }
+
+                                uint8_t out[4];
+                                write_u32_le(out, data);
+                                esp_err_t qerr = swd_queue_response(op, seq, SWD_UART_STATUS_OK, ack, out, 4, true);
+                                if (qerr != ESP_OK)
+                                {
+                                    ESP_LOGE(TAG, "SWD: failed to queue ap read response: %s", esp_err_to_name(qerr));
+                                }
+                                break;
+                            }
+
+                            case SWD_UART_OP_AP_WRITE:
+                            {
+                                if (!swd_session_active)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
+                                    break;
+                                }
+                                if (arg_len < 8)
+                                {
+                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+                                    break;
+                                }
+
+                                uint8_t ap = args[0];
+                                uint8_t ap_off = args[1];
+                                uint32_t data = read_u32_le(&args[4]);
+                                uint8_t ack = swd_uart_write_ap(&swd_ctx, ap, ap_off, data);
+                                esp_err_t qerr = swd_queue_response(op, seq, SWD_UART_STATUS_OK, ack, NULL, 0, true);
+                                if (qerr != ESP_OK)
+                                {
+                                    ESP_LOGE(TAG, "SWD: failed to queue ap write response: %s", esp_err_to_name(qerr));
+                                }
+                                break;
+                            }
+
+                            default:
+                                (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_OP, 0, NULL, 0, true);
+                                break;
+                            }
+
+                            break;
+                        }
 
                         default:
                             send_message("Unknown packet type: 0x%04X", header->type);
