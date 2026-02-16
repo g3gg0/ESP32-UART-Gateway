@@ -736,6 +736,7 @@ class EspSerial {
 window.EspSerial = EspSerial;
 
 </script>
+    <script src="https://cdn.jsdelivr.net/npm/@alexaltea/capstone-js@3.0.5/dist/capstone.min.js"></script>
 
     <style>
         * {
@@ -986,6 +987,13 @@ window.EspSerial = EspSerial;
             font-size: 13px;
         }
 
+        .ap-panel input.flash-input {
+            border-color: #a3e635 !important;
+            box-shadow: 0 0 0 3px rgba(163, 230, 53, 0.18) !important;
+            background: #172554 !important;
+            transition: all 0.12s ease-in-out;
+        }
+
         .ap-panel button {
             padding: 8px 12px;
             background: #6b7280;
@@ -1080,8 +1088,64 @@ window.EspSerial = EspSerial;
             cursor: default;
         }
 
+        .hex-editor .byte .nib {
+            display: inline-block;
+            width: 10px;
+            text-align: center;
+            border-radius: 3px;
+        }
+
+        .hex-editor .byte .nib.nsel {
+            background: rgba(96, 165, 250, 0.28);
+            outline: 1px solid rgba(96, 165, 250, 0.48);
+        }
+
+        .disasm-box {
+            margin-top: 10px;
+            border: 1px solid #374151;
+            border-radius: 6px;
+            background: #0b1220;
+            overflow: hidden;
+        }
+
+        .disasm-header {
+            padding: 8px 10px;
+            border-bottom: 1px solid #374151;
+            background: rgba(31, 41, 55, 0.6);
+            color: #a3e635;
+            font-weight: 800;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 12px;
+        }
+
+        .disasm-view {
+            padding: 8px 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 13px;
+            color: #e5e7eb;
+            white-space: pre;
+            overflow-x: auto;
+            max-height: 280px;
+        }
+
+        .disasm-line {
+            display: block;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+
+        .disasm-line.active {
+            background: rgba(59, 130, 246, 0.18);
+            outline: 1px solid rgba(59, 130, 246, 0.55);
+        }
+
         .hex-editor .byte:hover {
             background: rgba(59, 130, 246, 0.15);
+        }
+
+        .hex-editor .byte.dirty {
+            background: rgba(245, 158, 11, 0.18);
+            outline: 1px solid rgba(245, 158, 11, 0.35);
         }
 
         .hex-editor .byte.sel {
@@ -1101,12 +1165,17 @@ window.EspSerial = EspSerial;
             background: rgba(16, 185, 129, 0.12);
         }
 
+        .hex-editor .ascii.dirty {
+            background: rgba(245, 158, 11, 0.12);
+            outline: 1px solid rgba(245, 158, 11, 0.25);
+        }
+
         .hex-editor .ascii.sel {
             background: rgba(16, 185, 129, 0.18);
             outline: 1px solid rgba(16, 185, 129, 0.35);
         }
 
-        .hex-editor .hex-input-overlay {
+        .hex-input-overlay {
             position: fixed;
             z-index: 9999;
             padding: 0;
@@ -1114,7 +1183,7 @@ window.EspSerial = EspSerial;
             border: none;
         }
 
-        .hex-editor .hex-input-overlay input {
+        .hex-input-overlay input {
             padding: 6px 8px;
             border: 1px solid #60a5fa;
             border-radius: 6px;
@@ -1173,6 +1242,55 @@ window.EspSerial = EspSerial;
             font-size: 12px;
             color: #9ca3af;
             text-align: center;
+        }
+
+        .toast-container {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+        }
+
+        .toast {
+            min-width: 260px;
+            max-width: 420px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            background: rgba(15, 23, 42, 0.92);
+            color: #e5e7eb;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.40);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 13px;
+            font-weight: 650;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .toast.error {
+            border-color: rgba(239, 68, 68, 0.55);
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12), 0 12px 30px rgba(0, 0, 0, 0.45);
+        }
+
+        .toast.error.flash {
+            animation: toastFlashRed 0.55s ease-in-out 0s 1;
+        }
+
+        @keyframes toastFlashRed {
+            0% { background: rgba(127, 29, 29, 0.95); }
+            55% { background: rgba(15, 23, 42, 0.92); }
+            100% { background: rgba(127, 29, 29, 0.95); }
         }
     </style>
 </head>
@@ -1241,6 +1359,8 @@ window.EspSerial = EspSerial;
         </div>
     </div>
 
+    <div class="toast-container" id="toastContainer"></div>
+
     <script>
 
         /* ============= Global State and UI Functions ============= */
@@ -1267,6 +1387,8 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
 
         let lastMemAddrText = '0xE000ED00';
         let lastMemWordsText = '16';
+        let lastMemUseBlockRead = true;
+        let lastMemWriteValueText = '0x00000000';
 
         const apHexEditors = new Map();
         const apSubTabState = new Map();
@@ -1606,6 +1728,64 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
             return (b & 0xFF).toString(16).toUpperCase().padStart(2, '0');
         }
 
+        async function ensureCapstoneReady() {
+            if (!window.cs) throw new Error('Capstone not loaded (missing capstone.min.js)');
+            try {
+                if (cs.MCapstone && typeof cs.MCapstone.then === 'function') {
+                    await cs.MCapstone;
+                }
+            } catch (e) {
+                throw new Error(`Capstone init failed: ${e && e.message ? e.message : e}`);
+            }
+            if (!cs.Capstone) throw new Error('Capstone API missing');
+            return true;
+        }
+
+        function showToast(message, kind = 'error', opts = {}) {
+            const container = document.getElementById('toastContainer');
+            if (!container) return;
+            const text = (message === null || message === undefined) ? '' : String(message);
+            const timeoutMs = (opts && opts.timeoutMs) ? (opts.timeoutMs | 0) : 2200;
+
+            const el = document.createElement('div');
+            el.className = `toast ${kind}`;
+            el.textContent = text;
+            container.appendChild(el);
+
+            /* trigger transition */
+            requestAnimationFrame(() => {
+                el.classList.add('show');
+                if (kind === 'error') el.classList.add('flash');
+            });
+
+            setTimeout(() => {
+                try { el.classList.remove('show'); } catch (e) { /* ignore */ }
+                setTimeout(() => {
+                    try { el.remove(); } catch (e) { /* ignore */ }
+                }, 240);
+            }, Math.max(400, timeoutMs));
+        }
+
+        function flashInput(el, ms = 420) {
+            if (!el) return;
+            try {
+                const prev = el.dataset.flashTimerId;
+                if (prev) {
+                    clearTimeout(parseInt(prev, 10));
+                }
+                el.classList.remove('flash-input');
+                void el.offsetWidth;
+                el.classList.add('flash-input');
+                const tid = setTimeout(() => {
+                    try { el.classList.remove('flash-input'); } catch (e) { /* ignore */ }
+                    try { delete el.dataset.flashTimerId; } catch (e) { /* ignore */ }
+                }, Math.max(80, ms | 0));
+                el.dataset.flashTimerId = String(tid);
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
         function isPrintableAscii(code) {
             return code >= 0x20 && code <= 0x7E;
         }
@@ -1616,16 +1796,46 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 this.baseAddr = 0;
                 this.data = new Uint8Array(0);
                 this.onChange = opts.onChange || null;
+                this.onModeChange = opts.onModeChange || null;
                 this.editMode = 'byte';
-                this._dirtyWords = new Set();
+                /* Dirty tracking is per-byte. UI/write-back can group bytes into
+                 * 8/16/32-bit regions depending on selected width.
+                 */
+                this._dirtyBytes = new Uint8Array(0);
+                this._dirtyCount = 0;
+                this._dirtyRegionSize = this._editSizeBytes(); /* bytes: 1,2,4 */
                 this._root = null;
                 this._view = null;
                 this._selIndex = null;
                 this._selKind = 'hex';
+                this._selNibble = null;
                 this._overlay = null;
                 this._boundKeyDown = (e) => this._onKeyDown(e);
                 this._boundClick = (e) => this._onClick(e);
                 this._boundDblClick = (e) => this._onDblClick(e);
+            }
+
+            _targetCellEl(rawTarget) {
+                /* Some browsers report a Text node as the event target when double-clicking.
+                 * Normalize to the nearest element carrying data-kind/data-index.
+                 */
+                if (!rawTarget) return null;
+                let el = rawTarget;
+                try {
+                    if (el.nodeType === 3) el = el.parentElement; /* TEXT_NODE */
+                } catch (e) {
+                    /* ignore */
+                }
+                if (!el) return null;
+                if (el.dataset && el.dataset.kind && el.dataset.index !== undefined) return el;
+                try {
+                    if (el.closest) {
+                        return el.closest('[data-kind][data-index]');
+                    }
+                } catch (e) {
+                    /* ignore */
+                }
+                return null;
             }
 
             render(containerEl) {
@@ -1658,6 +1868,10 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 modeSel.value = this.editMode;
                 modeSel.onchange = () => {
                     this.editMode = modeSel.value;
+                    this.setDirtyRegionSize(this._editSizeBytes());
+                    if (this.onModeChange) {
+                        try { this.onModeChange({ editMode: this.editMode, widthBytes: this._editSizeBytes() }); } catch (e) { /* ignore */ }
+                    }
                 };
                 modeLabel.appendChild(modeSel);
 
@@ -1691,47 +1905,98 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 this.baseAddr = baseAddr >>> 0;
                 this._selIndex = null;
                 this._selKind = 'hex';
-                this._dirtyWords.clear();
+                this._selNibble = null;
+                this._dirtyBytes = new Uint8Array(this.data.length);
+                this._dirtyCount = 0;
                 this._renderView();
             }
 
             isDirty() {
-                return this._dirtyWords.size > 0;
+                return this._dirtyCount > 0;
             }
 
             clearDirty() {
-                this._dirtyWords.clear();
+                if (this._dirtyBytes && this._dirtyBytes.length) {
+                    this._dirtyBytes.fill(0);
+                }
+                this._dirtyCount = 0;
             }
 
             markDirty(startByte, lengthBytes) {
                 const s = Math.max(0, startByte | 0);
                 const e = Math.min(this.data.length, (s + (lengthBytes | 0)) | 0);
                 if (e <= s) return;
-                const w0 = (s >>> 2) | 0;
-                const w1 = ((e - 1) >>> 2) | 0;
-                for (let w = w0; w <= w1; w++) {
-                    this._dirtyWords.add(w);
+                if (!this._dirtyBytes || this._dirtyBytes.length !== this.data.length) {
+                    this._dirtyBytes = new Uint8Array(this.data.length);
+                    this._dirtyCount = 0;
+                }
+                for (let i = s; i < e; i++) {
+                    if (this._dirtyBytes[i] === 0) {
+                        this._dirtyBytes[i] = 1;
+                        this._dirtyCount++;
+                    }
                 }
             }
 
-            getDirtyWordRanges() {
-                if (this._dirtyWords.size === 0) return [];
-                const words = Array.from(this._dirtyWords).sort((a, b) => a - b);
+            setDirtyRegionSize(bytes) {
+                const v = bytes | 0;
+                if (v === 1 || v === 2 || v === 4) {
+                    this._dirtyRegionSize = v;
+                    this._renderView();
+                }
+            }
+
+            getDirtyRegionSize() {
+                return this._dirtyRegionSize | 0;
+            }
+
+            _isRegionDirty(byteIndex, regionSize) {
+                if (!this._dirtyBytes || this._dirtyCount === 0) return false;
+                const rs = (regionSize | 0) || 1;
+                const start = (byteIndex & ~(rs - 1)) | 0;
+                const end = Math.min(this.data.length, start + rs);
+                for (let i = start; i < end; i++) {
+                    if (this._dirtyBytes[i]) return true;
+                }
+                return false;
+            }
+
+            getDirtyRanges(regionSizeBytes) {
+                const rs = (regionSizeBytes | 0) || 1;
+                if (!(rs === 1 || rs === 2 || rs === 4)) throw new Error('getDirtyRanges: bad region size');
+                if (!this._dirtyBytes || this._dirtyCount === 0) return [];
+
+                const regions = new Set();
+                for (let i = 0; i < this._dirtyBytes.length; i++) {
+                    if (!this._dirtyBytes[i]) continue;
+                    regions.add((i & ~(rs - 1)) | 0);
+                }
+
+                if (regions.size === 0) return [];
+                const starts = Array.from(regions).sort((a, b) => a - b);
                 const ranges = [];
-                let start = words[0];
-                let prev = words[0];
-                for (let i = 1; i < words.length; i++) {
-                    const w = words[i];
-                    if (w === (prev + 1)) {
-                        prev = w;
+                let start = starts[0];
+                let prev = starts[0];
+                for (let i = 1; i < starts.length; i++) {
+                    const v = starts[i];
+                    if (v === (prev + rs)) {
+                        prev = v;
                         continue;
                     }
-                    ranges.push({ startWord: start, wordCount: (prev - start + 1) });
-                    start = w;
-                    prev = w;
+                    ranges.push({ start, length: (prev - start + rs) });
+                    start = v;
+                    prev = v;
                 }
-                ranges.push({ startWord: start, wordCount: (prev - start + 1) });
+                ranges.push({ start, length: (prev - start + rs) });
                 return ranges;
+            }
+
+            countDirtyRegions(regionSizeBytes) {
+                const rs = (regionSizeBytes | 0) || 1;
+                const ranges = this.getDirtyRanges(rs);
+                let total = 0;
+                for (const rg of ranges) total += (rg.length / rs) | 0;
+                return total | 0;
             }
 
             getData() {
@@ -1779,12 +2044,36 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
 
                         if (idx < rowEnd) {
                             const b = this.data[idx] & 0xFF;
+                            const dirty = this._isRegionDirty(idx, this._dirtyRegionSize);
+
+                            const hx = bytesToHex2(b);
 
                             const s = document.createElement('span');
                             s.className = 'byte';
                             s.dataset.kind = 'hex';
                             s.dataset.index = String(idx);
-                            s.textContent = bytesToHex2(b);
+                            const n0 = document.createElement('span');
+                            n0.className = 'nib';
+                            n0.dataset.kind = 'hex';
+                            n0.dataset.index = String(idx);
+                            n0.dataset.nib = '0';
+                            n0.textContent = hx[0];
+
+                            const n1 = document.createElement('span');
+                            n1.className = 'nib';
+                            n1.dataset.kind = 'hex';
+                            n1.dataset.index = String(idx);
+                            n1.dataset.nib = '1';
+                            n1.textContent = hx[1];
+
+                            if (this._selIndex === idx && this._selKind === 'hex' && (this._selNibble === 0 || this._selNibble === 1)) {
+                                if (this._selNibble === 0) n0.classList.add('nsel');
+                                if (this._selNibble === 1) n1.classList.add('nsel');
+                            }
+
+                            s.appendChild(n0);
+                            s.appendChild(n1);
+                            if (dirty) s.classList.add('dirty');
                             if (this._selIndex === idx && this._selKind === 'hex') s.classList.add('sel');
                             hex.appendChild(s);
                             hex.appendChild(document.createTextNode(' '));
@@ -1794,6 +2083,7 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                             a.dataset.kind = 'ascii';
                             a.dataset.index = String(idx);
                             a.textContent = isPrintableAscii(b) ? String.fromCharCode(b) : '.';
+                            if (dirty) a.classList.add('dirty');
                             if (this._selIndex === idx && this._selKind === 'ascii') a.classList.add('sel');
                             ascii.appendChild(a);
                         } else {
@@ -1815,6 +2105,7 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 if (idx < 0 || idx >= this.data.length) return;
                 this._selIndex = idx;
                 this._selKind = kind || 'hex';
+                this._selNibble = null;
                 this._renderView();
             }
 
@@ -1822,11 +2113,17 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 if (this._selIndex === null || this._selIndex === undefined) return;
                 const n = Math.max(0, Math.min(this.data.length - 1, (this._selIndex + delta) | 0));
                 this._selIndex = n;
+                this._selNibble = null;
                 this._renderView();
             }
 
             _onClick(e) {
-                const t = e.target;
+                /* When double-clicking, the browser fires click twice then dblclick.
+                 * If we re-render on the 2nd click, we detach the target element and the
+                 * dblclick overlay positioning breaks. Let dblclick handle it.
+                 */
+                if (e && e.detail && e.detail > 1) return;
+                const t = this._targetCellEl(e.target);
                 if (!t || !t.dataset) return;
                 const kind = t.dataset.kind;
                 const idx = t.dataset.index;
@@ -1837,17 +2134,53 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
             }
 
             _onDblClick(e) {
-                const t = e.target;
+                let t = this._targetCellEl(e.target);
+
+                /* Some dblclicks land on whitespace/text nodes between spans.
+                 * Try resolving the actual element under the pointer.
+                 */
+                try {
+                    if ((!t || !t.dataset) && e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+                        const under = document.elementFromPoint(e.clientX, e.clientY);
+                        t = this._targetCellEl(under);
+                    }
+                } catch (err) {
+                    /* ignore */
+                }
+
+                /* Final fallback: start edit at current selection. */
+                if (!t || !t.dataset) {
+                    if (this._selIndex === null || this._selIndex === undefined) return;
+                    try {
+                        const q = this._view ? this._view.querySelector(`[data-kind="${this._selKind}"][data-index="${this._selIndex}"]`) : null;
+                        if (q && q.dataset) t = q;
+                    } catch (err) {
+                        /* ignore */
+                    }
+                }
+
                 if (!t || !t.dataset) return;
                 const kind = t.dataset.kind;
                 const idxStr = t.dataset.index;
                 if (!kind || idxStr === undefined) return;
                 const idx = parseInt(idxStr, 10);
-                this._select(idx, kind);
+
+                /* IMPORTANT: do not call _select() here.
+                 * _select() re-renders the view, which detaches the clicked element and breaks
+                 * getBoundingClientRect() positioning for the overlay input.
+                 */
+                this._selIndex = idx;
+                this._selKind = kind;
 
                 if (kind === 'hex') {
-                    this._beginHexEditAtTarget(t, idx);
-                } else if (kind === 'ascii') {
+                    /* Inline nibble overwrite editing: start at first nibble. */
+                    this._selNibble = 0;
+                    this._renderView();
+                    return;
+                }
+
+                this._selNibble = null;
+                if (kind === 'ascii') {
                     this._beginAsciiEditAtTarget(t, idx);
                 }
             }
@@ -1856,6 +2189,10 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 if (this.editMode === 'dword') return 4;
                 if (this.editMode === 'word') return 2;
                 return 1;
+            }
+
+            getEditSizeBytes() {
+                return this._editSizeBytes() | 0;
             }
 
             _alignedIndex(index) {
@@ -2004,6 +2341,36 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                         this.markDirty(this._selIndex, 1);
                         if (this.onChange) this.onChange({ start: this._selIndex, length: 1, kind: 'ascii' });
                         this._selIndex = Math.min(this.data.length - 1, this._selIndex + 1);
+                        this._renderView();
+                    }
+                }
+
+                if (this._selKind === 'hex' && e.key && e.key.length === 1) {
+                    const ch = e.key.toUpperCase();
+                    if (ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'F') {
+                        e.preventDefault();
+
+                        const nib = parseInt(ch, 16) & 0xF;
+                        let which = (this._selNibble === 0 || this._selNibble === 1) ? this._selNibble : 0;
+
+                        const oldByte = this.data[this._selIndex] & 0xFF;
+                        let newByte = oldByte;
+                        if (which === 0) {
+                            newByte = ((nib << 4) | (oldByte & 0x0F)) & 0xFF;
+                        } else {
+                            newByte = ((oldByte & 0xF0) | nib) & 0xFF;
+                        }
+                        this.data[this._selIndex] = newByte;
+                        this.markDirty(this._selIndex, 1);
+                        if (this.onChange) this.onChange({ start: this._selIndex, length: 1, kind: 'hex' });
+
+                        /* advance to next nibble */
+                        if (which === 0) {
+                            this._selNibble = 1;
+                        } else {
+                            this._selNibble = 0;
+                            this._selIndex = Math.min(this.data.length - 1, this._selIndex + 1);
+                        }
                         this._renderView();
                     }
                 }
@@ -2606,14 +2973,52 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 for (let attempt = 0; attempt < 3; attempt++) {
                     const temp = [];
                     try {
+                        /* Some targets/peripherals effectively behave like DRW returns the first word
+                         * immediately (no observable dummy read needed), while others require the classic
+                         * MEM-AP priming read.
+                         *
+                         * To avoid the common "first word skipped" symptom, take a reference word0 via
+                         * non-incrementing single read, then decide whether the first DRW read already
+                         * equals word0.
+                         */
+                        let ref0 = null;
+                        try {
+                            ref0 = await this.memRead32Via(ap, base);
+                        } catch (e) {
+                            ref0 = null;
+                        }
+
                         await this.apWriteStrict(ap, MEMAP_CSW, csw);
                         await this.apWriteStrict(ap, MEMAP_TAR, base);
-                        /* dummy read to align MEM-AP read buffer */
-                        await this.apReadStrict(ap, MEMAP_DRW, true);
 
-                        for (let i = 0; i < count; i++) {
-                            const v = await this.apReadStrict(ap, MEMAP_DRW, true);
-                            temp.push(v >>> 0);
+                        if (count === 0) return [];
+
+                        const r0 = await this.apReadStrict(ap, MEMAP_DRW, true);
+                        if (count === 1) {
+                            if (ref0 !== null && (r0 >>> 0) === (ref0 >>> 0)) {
+                                return [r0 >>> 0];
+                            }
+                            const r1 = await this.apReadStrict(ap, MEMAP_DRW, true);
+                            return [r1 >>> 0];
+                        }
+
+                        const r1 = await this.apReadStrict(ap, MEMAP_DRW, true);
+
+                        const r0IsWord0 = (ref0 !== null) && ((r0 >>> 0) === (ref0 >>> 0));
+                        if (r0IsWord0) {
+                            temp.push(r0 >>> 0);
+                            temp.push(r1 >>> 0);
+                            for (let i = 2; i < count; i++) {
+                                const v = await this.apReadStrict(ap, MEMAP_DRW, true);
+                                temp.push(v >>> 0);
+                            }
+                        } else {
+                            /* Treat r0 as dummy/priming, and r1 as word0 */
+                            temp.push(r1 >>> 0);
+                            for (let i = 1; i < count; i++) {
+                                const v = await this.apReadStrict(ap, MEMAP_DRW, true);
+                                temp.push(v >>> 0);
+                            }
                         }
                         return temp;
                     } catch (e) {
@@ -2637,6 +3042,29 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 await this.apWrite(ap, MEMAP_TAR, address >>> 0);
                 for (let i = 0; i < words.length; i++) {
                     await this.apWrite(ap, MEMAP_DRW, (words[i] >>> 0));
+                }
+                return true;
+            }
+
+            async memWriteBlock16Via(ap, address, halfwords) {
+                const csw = 0x23000011;
+                const addr = address >>> 0;
+                if ((addr & 1) !== 0) throw new Error('memWriteBlock16Via: unaligned address');
+                await this.apWrite(ap, MEMAP_CSW, csw);
+                await this.apWrite(ap, MEMAP_TAR, addr);
+                for (let i = 0; i < halfwords.length; i++) {
+                    await this.apWrite(ap, MEMAP_DRW, (halfwords[i] & 0xFFFF) >>> 0);
+                }
+                return true;
+            }
+
+            async memWriteBlock8Via(ap, address, bytes) {
+                const csw = 0x23000010;
+                const addr = address >>> 0;
+                await this.apWrite(ap, MEMAP_CSW, csw);
+                await this.apWrite(ap, MEMAP_TAR, addr);
+                for (let i = 0; i < bytes.length; i++) {
+                    await this.apWrite(ap, MEMAP_DRW, (bytes[i] & 0xFF) >>> 0);
                 }
                 return true;
             }
@@ -3025,9 +3453,43 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                     throw new Error('Selected AP is not a MEM-AP');
                 }
                 const v = await swd.memRead32Via(activeAp, addr);
-                logToConsole(`AP${activeAp} Read32 ${u32ToHex(addr)} => ${u32ToHex(v)}`, 'info');
+                const valEl = document.getElementById('memWriteValueInput');
+                if (valEl) {
+                    valEl.value = u32ToHex(v);
+                    lastMemWriteValueText = valEl.value;
+                    flashInput(valEl, 420);
+                }
             } catch (err) {
                 logToConsole(`Read32 error: ${err.message}`, 'error');
+                showToast(`Read32 failed: ${err.message}`, 'error');
+            }
+        }
+
+        async function doWrite32() {
+            if (!swd) return;
+            try {
+                const addrEl = document.getElementById('memAddrInput');
+                const valEl = document.getElementById('memWriteValueInput');
+                if (!addrEl || !valEl) throw new Error('No memory inputs (select a MEM-AP tab)');
+
+                lastMemAddrText = addrEl.value;
+                lastMemWriteValueText = valEl.value;
+
+                const addr = parseHexOrDec(addrEl.value);
+                const value = parseHexOrDec(valEl.value) >>> 0;
+
+                if (activeAp === null || activeAp === undefined) {
+                    throw new Error('No AP selected');
+                }
+                const apInfo = scannedAps.find(a => a.ap === activeAp);
+                if (!apInfo || !apInfo.info || apInfo.info.ap_class !== 0x08) {
+                    throw new Error('Selected AP is not a MEM-AP');
+                }
+
+                await swd.memWrite32Via(activeAp, addr, value);
+            } catch (err) {
+                logToConsole(`Write32 error: ${err.message}`, 'error');
+                showToast(`Write32 failed: ${err.message}`, 'error');
             }
         }
 
@@ -3036,12 +3498,15 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
             try {
                 const addrEl = document.getElementById('memAddrInput');
                 const wordsEl = document.getElementById('memWordsInput');
+                const useBlkEl = document.getElementById('memUseBlockRead');
                 if (!addrEl || !wordsEl) throw new Error('No memory inputs (select a MEM-AP tab)');
                 lastMemAddrText = addrEl.value;
                 lastMemWordsText = wordsEl.value;
 
                 const addr = parseHexOrDec(addrEl.value);
                 const words = Math.max(1, Math.min(256, parseHexOrDec(wordsEl.value) || 16));
+                const useBlock = !!(useBlkEl && useBlkEl.checked);
+                lastMemUseBlockRead = useBlock;
                 if (activeAp === null || activeAp === undefined) {
                     throw new Error('No AP selected');
                 }
@@ -3049,7 +3514,17 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 if (!apInfo || !apInfo.info || apInfo.info.ap_class !== 0x08) {
                     throw new Error('Selected AP is not a MEM-AP');
                 }
-                const data = await swd.memReadBlock32Via(activeAp, addr, words);
+
+                let data;
+                if (useBlock) {
+                    data = await swd.memReadBlock32Via(activeAp, addr, words);
+                } else {
+                    data = [];
+                    for (let i = 0; i < words; i++) {
+                        const v = await swd.memRead32Via(activeAp, (addr + (i * 4)) >>> 0);
+                        data.push(v >>> 0);
+                    }
+                }
                 const bytes = new Uint8Array(words * 4);
                 for (let i = 0; i < data.length; i++) {
                     const v = data[i] >>> 0;
@@ -3062,14 +3537,10 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 if (ed) {
                     ed.setData(bytes, addr);
                 }
-                const lines = [];
-                for (let i = 0; i < data.length; i++) {
-                    const a = (addr + i * 4) >>> 0;
-                    lines.push(`${u32ToHex(a)}: ${u32ToHex(data[i])}`);
-                }
-                logToConsole(`AP${activeAp} ReadBlock @${u32ToHex(addr)} words=${words}\n${lines.join('\n')}`, 'info');
+                logToConsole(`AP${activeAp} ReadBlock @${u32ToHex(addr)} words=${words} mode=${useBlock ? 'block' : 'single'}`, 'info');
             } catch (err) {
                 logToConsole(`ReadBlock error: ${err.message}`, 'error');
+                showToast(`Read block failed: ${err.message}`, 'error');
             }
         }
 
@@ -3333,6 +3804,24 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 row1.appendChild(b32);
                 pageHex.appendChild(row1);
 
+                const rowW = document.createElement('div');
+                rowW.className = 'row';
+                rowW.appendChild(document.createTextNode('Value:'));
+
+                const wval = document.createElement('input');
+                wval.id = 'memWriteValueInput';
+                wval.value = lastMemWriteValueText || '0x00000000';
+                wval.style.width = '140px';
+
+                const bw = document.createElement('button');
+                bw.id = 'btnWrite32';
+                bw.textContent = 'Write32';
+                bw.onclick = doWrite32;
+
+                rowW.appendChild(wval);
+                rowW.appendChild(bw);
+                pageHex.appendChild(rowW);
+
                 const row2 = document.createElement('div');
                 row2.className = 'row';
                 row2.appendChild(document.createTextNode('Words:'));
@@ -3347,8 +3836,26 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 bblk.textContent = 'Read block';
                 bblk.onclick = doReadBlock;
 
+                const modeLbl = document.createElement('label');
+                modeLbl.style.display = 'inline-flex';
+                modeLbl.style.alignItems = 'center';
+                modeLbl.style.gap = '8px';
+                modeLbl.style.color = '#9ca3af';
+                modeLbl.style.fontWeight = '700';
+
+                const modeChk = document.createElement('input');
+                modeChk.id = 'memUseBlockRead';
+                modeChk.type = 'checkbox';
+                modeChk.checked = !!lastMemUseBlockRead;
+                modeChk.onchange = () => {
+                    lastMemUseBlockRead = !!modeChk.checked;
+                };
+                modeLbl.appendChild(modeChk);
+                modeLbl.appendChild(document.createTextNode('Block read'));
+
                 row2.appendChild(words);
                 row2.appendChild(bblk);
+                row2.appendChild(modeLbl);
                 pageHex.appendChild(row2);
 
                 const wbRow = document.createElement('div');
@@ -3357,6 +3864,24 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 const dirtyLabel = document.createElement('span');
                 dirtyLabel.style.color = '#9ca3af';
                 dirtyLabel.textContent = 'Dirty: 0 words';
+
+                const dirtyUnitName = (w) => {
+                    if ((w | 0) === 4) return 'words';
+                    if ((w | 0) === 2) return 'halfwords';
+                    return 'bytes';
+                };
+
+                const updateDirtyUi = () => {
+                    const editor = apHexEditors.get(a.ap);
+                    if (!editor) {
+                        dirtyLabel.textContent = 'Dirty: 0';
+                        return;
+                    }
+                    const width = editor.getEditSizeBytes();
+                    editor.setDirtyRegionSize(width);
+                    const n = editor.countDirtyRegions(width);
+                    dirtyLabel.textContent = `Dirty: ${n} ${dirtyUnitName(width)}`;
+                };
 
                 const wbBtn = document.createElement('button');
                 wbBtn.textContent = 'Write back';
@@ -3370,26 +3895,54 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                         }
                         const base = editor.baseAddr >>> 0;
                         const bytes = editor.getData();
-                        if ((base & 3) !== 0 || (bytes.length & 3) !== 0) {
-                            throw new Error('Write-back requires 32-bit aligned base and length');
+
+                        const width = editor.getEditSizeBytes();
+                        editor.setDirtyRegionSize(width);
+
+                        if ((base & (width - 1)) !== 0) {
+                            throw new Error(`Write-back base must be ${width * 8}-bit aligned (or pick a smaller width)`);
+                        }
+                        if ((bytes.length & (width - 1)) !== 0) {
+                            throw new Error(`Write-back length must be a multiple of ${width} bytes (or pick a smaller width)`);
                         }
 
-                        const ranges = editor.getDirtyWordRanges();
-                        logToConsole(`AP${a.ap} write-back: ${ranges.length} range(s)`, 'info');
+                        const ranges = editor.getDirtyRanges(width);
+                        logToConsole(`AP${a.ap} write-back: ${ranges.length} range(s), width=${width * 8}`, 'info');
 
                         for (const rg of ranges) {
-                            const addr = (base + (rg.startWord * 4)) >>> 0;
-                            const wordsOut = [];
-                            for (let wi = 0; wi < rg.wordCount; wi++) {
-                                const bo = ((rg.startWord + wi) * 4) | 0;
-                                wordsOut.push(u32FromBytesLE(bytes, bo));
+                            const addr = (base + (rg.start >>> 0)) >>> 0;
+                            if ((addr & (width - 1)) !== 0) {
+                                throw new Error(`Write-back range unaligned for ${width * 8}-bit writes @${u32ToHex(addr)} (pick smaller width)`);
                             }
-                            await swd.memWriteBlock32Via(a.ap, addr, wordsOut);
-                            logToConsole(`AP${a.ap} write-back: wrote ${rg.wordCount} word(s) @${u32ToHex(addr)}`, 'info');
+
+                            if (width === 4) {
+                                const wordsOut = [];
+                                const n = (rg.length / 4) | 0;
+                                for (let wi = 0; wi < n; wi++) {
+                                    const bo = (rg.start + (wi * 4)) | 0;
+                                    wordsOut.push(u32FromBytesLE(bytes, bo));
+                                }
+                                await swd.memWriteBlock32Via(a.ap, addr, wordsOut);
+                                logToConsole(`AP${a.ap} write-back: wrote ${n} word(s) @${u32ToHex(addr)}`, 'info');
+                            } else if (width === 2) {
+                                const halfOut = [];
+                                const n = (rg.length / 2) | 0;
+                                for (let hi = 0; hi < n; hi++) {
+                                    const bo = (rg.start + (hi * 2)) | 0;
+                                    const v = (bytes[bo] | (bytes[bo + 1] << 8)) & 0xFFFF;
+                                    halfOut.push(v);
+                                }
+                                await swd.memWriteBlock16Via(a.ap, addr, halfOut);
+                                logToConsole(`AP${a.ap} write-back: wrote ${n} halfword(s) @${u32ToHex(addr)}`, 'info');
+                            } else {
+                                const out = bytes.slice(rg.start, rg.start + rg.length);
+                                await swd.memWriteBlock8Via(a.ap, addr, out);
+                                logToConsole(`AP${a.ap} write-back: wrote ${out.length} byte(s) @${u32ToHex(addr)}`, 'info');
+                            }
                         }
 
                         editor.clearDirty();
-                        dirtyLabel.textContent = 'Dirty: 0 words';
+                        updateDirtyUi();
                     } catch (e) {
                         logToConsole(`AP${a.ap} write-back error: ${e.message}`, 'error');
                     }
@@ -3408,24 +3961,19 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                         bytesPerRow: 16,
                         onChange: (chg) => {
                             const start = (editor.baseAddr + chg.start) >>> 0;
-                            const dirtyRanges = editor.getDirtyWordRanges();
-                            let dirtyWords = 0;
-                            for (const rg of dirtyRanges) dirtyWords += rg.wordCount;
-                            dirtyLabel.textContent = `Dirty: ${dirtyWords} words`;
+                            updateDirtyUi();
                             logToConsole(`AP${a.ap} hex edit: ${chg.kind} @${u32ToHex(start)} len=${chg.length}`, 'info');
-                        }
+                        },
+                        onModeChange: () => {
+                            updateDirtyUi();
+                        },
                     });
                     apHexEditors.set(a.ap, editor);
                 }
                 editor.render(hexContainer);
 
                 /* Update dirty label if we are re-rendering an existing editor. */
-                {
-                    const dirtyRanges = editor.getDirtyWordRanges();
-                    let dirtyWords = 0;
-                    for (const rg of dirtyRanges) dirtyWords += rg.wordCount;
-                    dirtyLabel.textContent = `Dirty: ${dirtyWords} words`;
-                }
+                updateDirtyUi();
 
                 /* ============ Debug tab ============ */
                 const coreHdr = document.createElement('div');
@@ -3472,6 +4020,93 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 regGrid.style.gap = '6px';
 
                 const regValueEls = new Map();
+                let regEditOverlay = null;
+                let lastDhcsr = 0;
+
+                const endRegOverlay = () => {
+                    if (!regEditOverlay) return;
+                    try { regEditOverlay.remove(); } catch (e) { /* ignore */ }
+                    regEditOverlay = null;
+                };
+
+                const beginRegEdit = async (regsel, targetEl) => {
+                    endRegOverlay();
+
+                    if (!swd) {
+                        showToast('SWD not initialized', 'error');
+                        return;
+                    }
+
+                    /* Only allow editing when halted (required by DCRSR semantics). */
+                    if ((lastDhcsr & SCS_DHCSR_S_HALT) === 0) {
+                        showToast('Reg write requires core halted', 'error');
+                        return;
+                    }
+
+                    const rect = targetEl.getBoundingClientRect();
+                    const overlay = document.createElement('div');
+                    overlay.className = 'hex-input-overlay';
+                    overlay.style.left = `${Math.max(8, rect.left)}px`;
+                    overlay.style.top = `${Math.max(8, rect.top - 2)}px`;
+
+                    const input = document.createElement('input');
+                    input.style.width = '140px';
+                    input.placeholder = '0x00000000';
+
+                    const currentText = (targetEl.textContent || '').trim();
+                    input.value = (currentText && currentText !== '-') ? currentText : '0x00000000';
+                    input.maxLength = 10;
+
+                    const finish = async (commit) => {
+                        const text = (input.value || '').trim();
+                        endRegOverlay();
+                        if (!commit) return;
+                        let value;
+                        try {
+                            value = parseHexOrDec(text) >>> 0;
+                        } catch (e) {
+                            showToast('Bad value', 'error');
+                            return;
+                        }
+                        try {
+                            await swd.coreRegWriteVia(a.ap, regsel, value);
+                            await refreshCoreRegs();
+                        } catch (e) {
+                            showToast(`Reg write failed: ${e.message}`, 'error');
+                        }
+                    };
+
+                    input.addEventListener('keydown', (ev) => {
+                        if (ev.key === 'Enter') {
+                            ev.preventDefault();
+                            finish(true);
+                        } else if (ev.key === 'Escape') {
+                            ev.preventDefault();
+                            finish(false);
+                        }
+                    });
+                    input.addEventListener('blur', () => {
+                        finish(true);
+                    });
+
+                    overlay.appendChild(input);
+                    document.body.appendChild(overlay);
+                    regEditOverlay = overlay;
+                    input.focus();
+                    input.select();
+                };
+
+                /* Click elsewhere closes the overlay. */
+                try {
+                    pageDebug.addEventListener('click', (ev) => {
+                        if (!regEditOverlay) return;
+                        const t = ev && ev.target ? ev.target : null;
+                        if (t && regEditOverlay.contains(t)) return;
+                        endRegOverlay();
+                    });
+                } catch (e) {
+                    /* ignore */
+                }
                 for (const r of regDefs) {
                     const cell = document.createElement('div');
                     cell.style.border = '1px solid #374151';
@@ -3490,6 +4125,16 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                     value.style.fontSize = '13px';
                     value.style.color = '#e5e7eb';
                     value.textContent = '-';
+                    value.style.cursor = 'text';
+                    value.title = 'Double-click to edit (core must be halted)';
+
+                    value.ondblclick = async (ev) => {
+                        try {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                        } catch (e) { /* ignore */ }
+                        await beginRegEdit(r.regsel, value);
+                    };
 
                     cell.appendChild(label);
                     cell.appendChild(value);
@@ -3498,13 +4143,133 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                 }
 
                 let regReadToken = 0;
+                let lastPc = null;
                 const setAllRegs = (text) => {
                     for (const el of regValueEls.values()) el.textContent = text;
                 };
 
+                const disasmBox = document.createElement('div');
+                disasmBox.className = 'disasm-box';
+                disasmBox.style.display = 'none';
+
+                const disasmHdr = document.createElement('div');
+                disasmHdr.className = 'disasm-header';
+                disasmHdr.textContent = 'Disassembly @ PC';
+
+                const disasmView = document.createElement('div');
+                disasmView.className = 'disasm-view';
+                disasmView.textContent = '(click Disasm @PC)';
+
+                disasmBox.appendChild(disasmHdr);
+                disasmBox.appendChild(disasmView);
+
+                async function refreshDisasmFromPc() {
+                    disasmBox.style.display = 'block';
+                    if (lastPc === null || lastPc === undefined) {
+                        disasmView.textContent = '(PC unknown - refresh regs while halted)';
+                        return;
+                    }
+
+                    const pcRaw = (lastPc >>> 0);
+                    const pc = (pcRaw & 1) ? (pcRaw & ~1) : pcRaw;
+
+                    disasmView.textContent = 'Disassembling...';
+                    try {
+                        await ensureCapstoneReady();
+
+                        const isZeroOkDisasmError = (err) => {
+                            const msg = (err && err.message) ? String(err.message) : String(err);
+                            return msg.includes('cs_disasm') && msg.includes('code 0') && (msg.includes('CS_ERR_OK') || msg.includes('OK (CS_ERR_OK)'));
+                        };
+
+                        /* Read a window around PC. Thumb is variable-length; over-read a bit. */
+                        const preBytes = 64;
+                        const totalBytes = 192;
+                        const start = (pc < preBytes) ? 0 : ((pc - preBytes) >>> 0);
+                        const startAligned = (start & ~3) >>> 0;
+                        const words = Math.max(1, Math.ceil(totalBytes / 4));
+
+                        const dataWords = await swd.memReadBlock32Via(a.ap, startAligned, words);
+                        const buf = new Uint8Array(words * 4);
+                        for (let i = 0; i < dataWords.length; i++) {
+                            const v = dataWords[i] >>> 0;
+                            buf[i * 4 + 0] = v & 0xFF;
+                            buf[i * 4 + 1] = (v >>> 8) & 0xFF;
+                            buf[i * 4 + 2] = (v >>> 16) & 0xFF;
+                            buf[i * 4 + 3] = (v >>> 24) & 0xFF;
+                        }
+
+                        if (cs.ARCH_ARM === undefined || cs.MODE_THUMB === undefined) {
+                            throw new Error('Capstone ARM/THUMB constants missing');
+                        }
+
+                        let mode = cs.MODE_THUMB;
+                        if (cs.MODE_MCLASS !== undefined) mode |= cs.MODE_MCLASS;
+                        if (cs.MODE_LITTLE_ENDIAN !== undefined) mode |= cs.MODE_LITTLE_ENDIAN;
+
+                        const d = new cs.Capstone(cs.ARCH_ARM, mode);
+
+                        let ins = null;
+                        let disErr = null;
+                        for (const input of [buf, Array.from(buf)]) {
+                            try {
+                                ins = d.disasm(input, startAligned >>> 0);
+                                disErr = null;
+                                break;
+                            } catch (e) {
+                                if (isZeroOkDisasmError(e)) {
+                                    ins = [];
+                                    disErr = null;
+                                    break;
+                                }
+                                disErr = e;
+                            }
+                        }
+                        try { d.close(); } catch (e) { /* ignore */ }
+
+                        if (disErr) throw disErr;
+
+                        if (!ins) ins = [];
+
+                        if (!ins.length) {
+                            disasmView.textContent = '(no instructions decoded)';
+                            return;
+                        }
+
+                        let active = 0;
+                        for (let i = 0; i < ins.length; i++) {
+                            const a0 = (ins[i].address >>> 0);
+                            const a1 = (i + 1 < ins.length) ? (ins[i + 1].address >>> 0) : ((a0 + 4) >>> 0);
+                            if (pc === a0) { active = i; break; }
+                            if (pc > a0 && pc < a1) { active = i; break; }
+                            if (pc < a0) { active = Math.max(0, i - 1); break; }
+                            active = i;
+                        }
+
+                        const startIdx = Math.max(0, active - 8);
+                        const endIdx = Math.min(ins.length, active + 9);
+
+                        disasmView.innerHTML = '';
+                        for (let i = startIdx; i < endIdx; i++) {
+                            const it = ins[i];
+                            const line = document.createElement('span');
+                            line.className = 'disasm-line' + (i === active ? ' active' : '');
+                            const addr = u32ToHex(it.address >>> 0);
+                            const mnem = (it.mnemonic || '').toString();
+                            const ops = (it.op_str || '').toString();
+                            line.textContent = `${addr}:\t${mnem}\t${ops}`;
+                            disasmView.appendChild(line);
+                        }
+                    } catch (e) {
+                        disasmView.textContent = `Disasm failed: ${e.message || e}`;
+                    }
+                }
+
                 async function refreshCoreRegs() {
                     const token = ++regReadToken;
                     setAllRegs('-');
+                    lastPc = null;
+                    lastDhcsr = 0;
 
                     let dhcsr = 0;
                     try {
@@ -3512,6 +4277,8 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                     } catch (e) {
                         return;
                     }
+
+                    lastDhcsr = dhcsr >>> 0;
 
                     if ((dhcsr & SCS_DHCSR_S_HALT) === 0) {
                         /* Reading core regs via DCRSR/DCRDR requires the core to be halted.
@@ -3527,9 +4294,17 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                         try {
                             const v = await swd.coreRegReadVia(a.ap, r.regsel);
                             el.textContent = u32ToHex(v);
+                            if (r.regsel === 0x0F) lastPc = v >>> 0;
                         } catch (e) {
                             el.textContent = '-';
                         }
+                    }
+
+                    /* Best-effort auto-refresh disassembly when regs are available. */
+                    try {
+                        await refreshDisasmFromPc();
+                    } catch (e) {
+                        /* ignore */
                     }
                 }
 
@@ -3599,12 +4374,29 @@ window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEA
                     }
                 };
 
+                const btnDisasm = document.createElement('button');
+                btnDisasm.textContent = 'Disasm @PC';
+                btnDisasm.onclick = async () => {
+                    try {
+                        if (lastPc === null || lastPc === undefined) {
+                            await refreshCoreRegs();
+                        } else {
+                            await refreshDisasmFromPc();
+                        }
+                    } catch (e) {
+                        disasmBox.style.display = 'block';
+                        disasmView.textContent = `Disasm failed: ${e.message || e}`;
+                    }
+                };
+
                 coreRow.appendChild(btnCpuid);
                 coreRow.appendChild(btnHalt);
                 coreRow.appendChild(btnCont);
                 coreRow.appendChild(btnStep);
                 coreRow.appendChild(btnRegs);
+                coreRow.appendChild(btnDisasm);
                 pageDebug.appendChild(regGrid);
+                pageDebug.appendChild(disasmBox);
 
                 /* ============ CoreSight tab ============ */
                 const csHdr = document.createElement('div');
