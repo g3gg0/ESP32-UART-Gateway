@@ -75,12 +75,6 @@ typedef struct
     uint8_t extended_mode;
 } uartgw_config_t;
 
-
-typedef struct __attribute__((packed))
-{
-    uint32_t io_mask;
-} swd_cmd_t;
-
 typedef struct
 {
     uart_port_t uart_num;
@@ -92,6 +86,72 @@ typedef struct
     StreamBufferHandle_t cdc_to_uart_buffer;
     QueueHandle_t uart_to_cdc_buffer;
 } uart_gateway_ctx_t;
+
+
+/* ===== SWD UART sub-protocol (inside UART_PACKET_TYPE_SWD payload) =====
+ *
+ * Payload begins with swd_uart_req_hdr_t (magic + op + flags + seq).
+ * Firmware always enqueues a binary response packet with op|0x80.
+ */
+
+#define SWD_UART_MAGIC 0xCAFEu
+
+typedef enum
+{
+    SWD_UART_OP_DETECT_PINS = 0x01,
+    SWD_UART_OP_DEINIT = 0x02,
+    SWD_UART_OP_TRANSFER = 0x03,
+    SWD_UART_OP_AP_READ = 0x10,
+    SWD_UART_OP_AP_READ_SINGLE = 0x11,
+    SWD_UART_OP_AP_WRITE = 0x12,
+} swd_uart_op_t;
+
+typedef enum
+{
+    SWD_UART_STATUS_OK = 0x00,
+    SWD_UART_STATUS_BAD_LEN = 0x01,
+    SWD_UART_STATUS_BAD_OP = 0x02,
+    SWD_UART_STATUS_NOT_INITIALIZED = 0x03,
+    SWD_UART_STATUS_PARITY = 0x04,
+    SWD_UART_STATUS_INTERNAL = 0x7F,
+} swd_uart_status_t;
+
+typedef enum
+{
+    SWD_UART_FLAG_VERBOSE_LOG = 0x01,
+} swd_uart_flags_t;
+
+typedef struct __attribute__((packed))
+{
+    uint16_t magic; /* SWD_UART_MAGIC */
+    uint8_t op;
+    uint8_t flags;
+    uint16_t seq;
+    uint16_t reserved;
+} swd_uart_req_hdr_t;
+
+typedef struct __attribute__((packed))
+{
+    uint16_t magic; /* SWD_UART_MAGIC */
+    uint8_t op;     /* request op | 0x80 */
+    uint8_t status; /* swd_uart_status_t */
+    uint16_t seq;
+    uint8_t swdio_gpio; /* final active SWDIO GPIO or 0xFF */
+    uint8_t swclk_gpio; /* final active SWCLK GPIO or 0xFF */
+    uint8_t ack;        /* SWD ACK (1/2/4) or 8 for parity mismatch, 0 if N/A */
+    uint8_t reserved;
+    uint16_t data_len;
+} swd_uart_rsp_hdr_t;
+
+typedef struct __attribute__((packed))
+{
+    uint32_t dpidr;
+    uint32_t targetid;
+    uint8_t dpidr_ok;
+    uint8_t targetid_ok;
+    uint8_t detected_device;
+    uint8_t reserved;
+} swd_uart_detect_rsp_t;
 
 /* Callback function type for configuration change notifications */
 typedef void (*uart_config_callback_t)(const uartgw_config_t *config);

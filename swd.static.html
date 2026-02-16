@@ -6,7 +6,736 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SWD Debug Console</title>
     
-    <script src="EspSerial.js"></script>
+    <script>
+/* ============= EspSerial Class ============= */
+class EspSerial {
+    constructor() {
+        this.port = null;
+        this.reader = null;
+        this.rxBuffer = new Uint8Array(0);
+        this.inputDone = false;
+        this.data_cbr = null; /* Raw UART-like bytes */
+        this.config_cbr = null; /* Config packets */
+        this.log_cbr = null; /* Parsed ESP log packets */
+        this.disconnect_cbr = null; /* Port disconnect callback */
+        this._disconnectHandler = null;
+        this._disconnecting = false;
+
+        /* SWD request/response tracking (new SWD sub-protocol) */
+        this._swdSeq = 1;
+        this._swdPending = new Map(); /* seq -> { resolve, reject, timer } */
+        this._swdDefaultTimeoutMs = 1500;
+
+        /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
+        this.EXTMODE_MAGIC = new Uint8Array([
+            0x0C, 0x00,  /* length: 12 (4 bytes header + 8 bytes payload) */
+            0x0A, 0x00,  /* type: 0x000A */
+            0x55, 0x41, 0x52, 0x54,  /* U A R T */
+            0x47, 0x57, 0x45, 0x58   /* G W E X */
+        ]);
+        this.EXTMODE_PACKET_SIZE = 12;
+
+        /* Packet header constants */
+        this.PACKET_HEADER_SIZE = 4;  /* uint16_t length + uint16_t type */
+        this.PACKET_TYPE_DATA = 0x00;
+        this.PACKET_TYPE_CONFIG = 0x01;
+        this.PACKET_TYPE_CONTROL = 0x02;
+        this.PACKET_TYPE_LOG = 0x03;
+        this.UART_PACKET_TYPE_SWD = 0x04;
+
+        this.CTRL_CMD_SIZE = 16;
+        this.LOGMSG_MAX_LEN = 256;
+
+        this.extendedMode = false;
+
+        /* Log message waiting mechanism */
+        this.nextLogPromise = null;
+        this.nextLogResolve = null;
+        this.nextLogTimer = null;
+    }
+
+    setDataCallback(callback) {
+        this.data_cbr = callback;
+    }
+
+    setConfigCallback(callback) {
+        this.config_cbr = callback;
+    }
+
+    setLogCallback(callback) {
+        this.log_cbr = callback;
+    }
+
+    setDisconnectCallback(callback) {
+        this.disconnect_cbr = callback;
+    }
+
+    consoleLogHex(prefix, data) {
+        if (!data) return;
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        console.log(`${prefix} [${bytes.length} bytes]`);
+    }
+
+    async flushSerialData(durationMs) {
+        if (!this.port) return;
+        try {
+            const reader = this.port.readable.getReader();
+            const startTime = Date.now();
+            let bytesDiscarded = 0;
+
+            while (Date.now() - startTime < durationMs) {
+                try {
+                    const { value, done } = await Promise.race([
+                        reader.read(),
+                        new Promise((_, reject) =>
+                            setTimeout(() => reject(new Error('flush timeout')), 50)
+                        )
+                    ]);
+
+                    if (done) break;
+                    if (value) {
+                        bytesDiscarded += value.length;
+                    }
+                } catch (err) {
+                    /* Timeout waiting for data, continue flushing */
+                    if (err.message !== 'flush timeout') throw err;
+                }
+            }
+
+            reader.releaseLock();
+            logToConsole(`Serial flush complete: ${bytesDiscarded} bytes discarded`, 'info');
+        } catch (err) {
+            logToConsole(`Serial flush error: ${err.message}`, 'info');
+        }
+    }
+
+    async connect() {
+        try {
+            this.port = await navigator.serial.requestPort();
+            await this.port.open({ baudRate: 921600 });
+
+            if (!this._disconnectHandler) {
+                this._disconnectHandler = (event) => {
+                    if (event && event.port === this.port) {
+                        this.handlePortDisconnect('system');
+                    }
+                };
+            }
+            navigator.serial.addEventListener('disconnect', this._disconnectHandler);
+
+            /* Ensure RTS and DTR are low after opening */
+            try {
+                await this.port.setSignals({ requestToSend: false, dataTerminalReady: false });
+            } catch (e) {
+                logToConsole(`Warning: Failed to set RTS/DTR: ${e.message}`, 'info');
+            }
+
+            /* Flush any pending serial data for 250ms */
+            await this.flushSerialData(250);
+
+            /* Start reader task (non-blocking) */
+            this.readFromPort();
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+            logToConsole('ESP Serial: Connected', 'info');
+
+            /* Send extended mode activation magic */
+            const magic = this.buildExtModeActivationPacket();
+            await this.sendPacket(magic, 'ExtMode Magic');
+            
+            logToConsole('ESP Serial: Extended mode activation sent', 'info');
+            this.extendedMode = true;
+
+            /* Wait for first log message to confirm extended mode is working */
+            logToConsole('ESP Serial: Waiting for log message...', 'info');
+            const logMsg = await this.waitForLogMessage(2000);
+            if (!logMsg) {
+                throw new Error('No log message received after extended mode activation - device may not be responding');
+            }
+            logToConsole(`ESP Serial: Confirmed with log: "${logMsg.substring(0, 50)}..."`, 'info');
+
+            /* Request current configuration - MUST succeed */
+            await new Promise(resolve => setTimeout(resolve, 100));
+            logToConsole('Requesting device configuration...', 'info');
+            await this.requestConfig();
+            logToConsole('Device configuration received', 'info');
+
+            return true;
+        } catch (err) {
+            if (err.name !== 'NotFoundError') {
+                logToConsole(`ESP Serial: Connection error: ${err.message}`, 'info');
+            }
+            return false;
+        }
+    }
+
+    async waitForLogMessage(timeoutMs = 2000) {
+        return new Promise((resolve) => {
+            this.nextLogResolve = resolve;
+            this.nextLogTimer = setTimeout(() => {
+                this.nextLogResolve = null;
+                resolve(null);
+            }, timeoutMs);
+        });
+    }
+
+    async disconnect() {
+        try {
+            this._disconnecting = true;
+            this.inputDone = true;
+
+            /* Release reader lock if it exists */
+            if (this.reader) {
+                try {
+                    this.reader.cancel();
+                } catch (e) {
+                    /* Reader might already be released */
+                }
+                this.reader = null;
+            }
+
+            /* Wait a moment for read loop to exit */
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            if (this.port) {
+                try {
+                    await this.port.close();
+                } catch (e) {
+                    logToConsole(`Port close error: ${e.message}`, 'info');
+                }
+                this.port = null;
+            }
+            if (this._disconnectHandler) {
+                navigator.serial.removeEventListener('disconnect', this._disconnectHandler);
+            }
+            this.notifyDisconnect({ reason: 'manual' });
+            logToConsole('ESP Serial: Disconnected', 'info');
+        } catch (err) {
+            logToConsole(`ESP Serial: Disconnect error: ${err.message}`, 'info');
+        } finally {
+            this._disconnecting = false;
+        }
+    }
+
+    notifyDisconnect(info) {
+        this._rejectAllSwdPending(new Error('Disconnected'));
+        if (this.disconnect_cbr) {
+            try {
+                this.disconnect_cbr(info);
+            } catch (err) {
+                logToConsole(`Disconnect callback error: ${err.message}`, 'info');
+            }
+        }
+    }
+
+    _rejectAllSwdPending(err) {
+        if (!this._swdPending || this._swdPending.size === 0) return;
+        for (const [seq, entry] of this._swdPending.entries()) {
+            if (entry && entry.timer) {
+                clearTimeout(entry.timer);
+            }
+            if (entry && entry.reject) {
+                try {
+                    entry.reject(err);
+                } catch (e) {
+                    /* ignore */
+                }
+            }
+            this._swdPending.delete(seq);
+        }
+    }
+
+    async handlePortDisconnect(reason) {
+        if (this._disconnecting) return;
+        this._disconnecting = true;
+
+        this.inputDone = true;
+        if (this.reader) {
+            try {
+                await this.reader.cancel();
+            } catch (e) {
+                /* ignore */
+            }
+            this.reader = null;
+        }
+
+        if (this.port) {
+            try {
+                await this.port.close();
+            } catch (e) {
+                /* ignore */
+            }
+            this.port = null;
+        }
+
+        if (this._disconnectHandler) {
+            navigator.serial.removeEventListener('disconnect', this._disconnectHandler);
+        }
+
+        this.notifyDisconnect({ reason: reason || 'unknown' });
+        logToConsole('ESP Serial: Port disconnected', 'info');
+        this._disconnecting = false;
+    }
+
+    appendBuffer(a, b) {
+        if (!a || a.length === 0) return new Uint8Array(b);
+        const out = new Uint8Array(a.length + b.length);
+        out.set(a, 0);
+        out.set(b, a.length);
+        return out;
+    }
+
+    buildExtModeActivationPacket() {
+        /* Magic packet is already complete: header + payload */
+        return new Uint8Array(this.EXTMODE_MAGIC);
+    }
+
+    buildPacketHeader(payloadLength, type) {
+        /* Calculate total length: payload + 4-byte header */
+        const length = payloadLength + 4;
+        const header = new Uint8Array(this.PACKET_HEADER_SIZE);
+        header[0] = length & 0xFF;          /* length low byte */
+        header[1] = (length >> 8) & 0xFF;   /* length high byte */
+        header[2] = type & 0xFF;            /* type low byte */
+        header[3] = (type >> 8) & 0xFF;     /* type high byte */
+        return header;
+    }
+
+    buildPacket(payload, type) {
+        /* Build complete packet: header + payload */
+        const header = this.buildPacketHeader(payload.length, type);
+        return this.appendBuffer(header, payload);
+    }
+
+    buildControlPacket(command) {
+        const cmdBytes = new TextEncoder().encode(command);
+        const payload = new Uint8Array(this.CTRL_CMD_SIZE);
+        for (let i = 0; i < Math.min(cmdBytes.length, this.CTRL_CMD_SIZE); i++) {
+            payload[i] = cmdBytes[i];
+        }
+        return this.buildPacket(payload, this.PACKET_TYPE_CONTROL);
+    }
+
+    processEspPackets(data) {
+        this.rxBuffer = this.appendBuffer(this.rxBuffer, data);
+
+        const emitData = (chunk) => {
+            if (!chunk || chunk.length === 0) return;
+            if (this.data_cbr) {
+                this.data_cbr(chunk);
+            }
+        };
+
+        const emitConfig = (configBytes) => {
+            let parsedConfig = {
+                type: 'config_packet',
+                data: configBytes,
+                baud_rate: 0,
+                tx_gpio: 0,
+                rx_gpio: 0,
+                reset_gpio: 0,
+                control_gpio: 0,
+                led_gpio: 0,
+                extended_mode: 0
+            };
+
+            /* Parse config structure if exactly 12 bytes */
+            if (configBytes.length === 12) {
+                const view = new DataView(configBytes.buffer, configBytes.byteOffset, configBytes.length);
+                parsedConfig.baud_rate = view.getUint32(0, true);
+                parsedConfig.tx_gpio = configBytes[4];
+                parsedConfig.rx_gpio = configBytes[5];
+                parsedConfig.reset_gpio = configBytes[6];
+                parsedConfig.control_gpio = configBytes[7];
+                parsedConfig.led_gpio = configBytes[8];
+                parsedConfig.extended_mode = configBytes[11];
+            }
+
+            if (this.config_cbr) {
+                this.config_cbr(parsedConfig);
+            }
+        };
+
+        const emitLog = (msgBytes) => {
+            const text = new TextDecoder().decode(msgBytes);
+            if (this.log_cbr) {
+                this.log_cbr({
+                    type: 'log_packet',
+                    data: msgBytes,
+                    text
+                });
+            }
+            /* Resolve any pending log wait */
+            if (this.nextLogResolve) {
+                this.nextLogResolve(text);
+                this.nextLogResolve = null;
+                if (this.nextLogTimer) {
+                    clearTimeout(this.nextLogTimer);
+                    this.nextLogTimer = null;
+                }
+            }
+        };
+
+        const emitSwd = (payload) => {
+            if (!payload || payload.length < 12) {
+                return;
+            }
+
+            const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+            const magic = view.getUint16(0, true);
+            if (magic !== 0xCAFE) {
+                return;
+            }
+
+            const op = payload[2] >>> 0;
+            const status = payload[3] >>> 0;
+            const seq = view.getUint16(4, true) >>> 0;
+            const swdio_gpio = payload[6] >>> 0;
+            const swclk_gpio = payload[7] >>> 0;
+            const ack = payload[8] >>> 0;
+            const data_len = view.getUint16(10, true) >>> 0;
+
+            if (payload.length < 12 + data_len) {
+                return;
+            }
+
+            const data = payload.slice(12, 12 + data_len);
+            const packet = {
+                type: 'swd_packet',
+                op,
+                req_op: (op & 0x7F) >>> 0,
+                is_response: ((op & 0x80) !== 0),
+                status,
+                seq,
+                swdio_gpio,
+                swclk_gpio,
+                ack,
+                data,
+                raw: payload
+            };
+
+            const pending = this._swdPending.get(seq);
+            if (pending) {
+                if (pending.timer) clearTimeout(pending.timer);
+                this._swdPending.delete(seq);
+                pending.resolve(packet);
+                return;
+            }
+        };
+
+        if (!this.extendedMode) {
+            /* In non-extended mode, just pass through all data */
+            if (this.rxBuffer.length > 0) {
+                emitData(this.rxBuffer);
+                this.rxBuffer = new Uint8Array(0);
+            }
+            return;
+        }
+
+        /* Extended mode: parse packet headers */
+        while (this.rxBuffer.length >= this.PACKET_HEADER_SIZE) {
+            const length = (this.rxBuffer[0] | (this.rxBuffer[1] << 8)) >>> 0;
+            const type = (this.rxBuffer[2] | (this.rxBuffer[3] << 8)) >>> 0;
+
+            /* Validate length (must include header, minimum 4) */
+            if (length < 4) {
+                /* Invalid packet, discard first byte and resync */
+                this.rxBuffer = this.rxBuffer.slice(1);
+                continue;
+            }
+
+            const payloadLen = length - 4;
+            const totalLen = this.PACKET_HEADER_SIZE + payloadLen;
+
+            /* Wait for complete packet */
+            if (this.rxBuffer.length < totalLen) {
+                break;
+            }
+
+            /* Extract payload */
+            const payload = this.rxBuffer.slice(this.PACKET_HEADER_SIZE, totalLen);
+            this.rxBuffer = this.rxBuffer.slice(totalLen);
+
+            /* Handle packet based on type */
+            if (type === this.PACKET_TYPE_DATA) {
+                /* Type 0x00: Normal serial data */
+                emitData(payload);
+            } else if (type === this.PACKET_TYPE_CONFIG) {
+                /* Type 0x01: Config response */
+                emitConfig(payload);
+            } else if (type === this.PACKET_TYPE_LOG) {
+                /* Type 0x03: Log message */
+                emitLog(payload);
+            } else if (type === this.UART_PACKET_TYPE_SWD) {
+                /* Type 0x04: SWD binary responses */
+                emitSwd(payload);
+            } else {
+                /* Unknown packet type, pass through as data */
+                emitData(payload);
+            }
+        }
+    }
+
+    _nextSwdSeq() {
+        /* seq=0 reserved */
+        let seq = this._swdSeq & 0xFFFF;
+        if (seq === 0) seq = 1;
+        this._swdSeq = (seq + 1) & 0xFFFF;
+        if (this._swdSeq === 0) this._swdSeq = 1;
+        return seq;
+    }
+
+    _buildSwdRequestPayload(op, flags, seq, args) {
+        const a = args ? (args instanceof Uint8Array ? args : new Uint8Array(args)) : new Uint8Array(0);
+        const out = new Uint8Array(8 + a.length);
+        /* magic 0xCAFE little-endian */
+        out[0] = 0xFE;
+        out[1] = 0xCA;
+        out[2] = op & 0xFF;
+        out[3] = flags & 0xFF;
+        out[4] = seq & 0xFF;
+        out[5] = (seq >> 8) & 0xFF;
+        out[6] = 0;
+        out[7] = 0;
+        if (a.length) out.set(a, 8);
+        return out;
+    }
+
+    async swdRequest(op, args, options) {
+        if (!this.port) throw new Error('Port not connected');
+        const opt = options || {};
+        const flags = (opt.flags || 0) & 0xFF;
+        const timeoutMs = opt.timeoutMs || this._swdDefaultTimeoutMs;
+        const seq = (opt.seq !== undefined) ? (opt.seq & 0xFFFF) : this._nextSwdSeq();
+
+        if (this._swdPending.has(seq)) {
+            throw new Error(`SWD seq collision: ${seq}`);
+        }
+
+        const payload = this._buildSwdRequestPayload(op, flags, seq, args);
+        const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_SWD);
+
+        return new Promise(async (resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._swdPending.delete(seq);
+                reject(new Error(`SWD timeout (op=0x${op.toString(16)}, seq=${seq})`));
+            }, timeoutMs);
+
+            this._swdPending.set(seq, { resolve, reject, timer });
+
+            try {
+                await this.sendPacket(packet, `SWD op=0x${op.toString(16)} seq=${seq}`);
+            } catch (err) {
+                clearTimeout(timer);
+                this._swdPending.delete(seq);
+                reject(err);
+            }
+        });
+    }
+
+    waitForSwdResponse(seq, timeoutMs) {
+        if (!this.port) throw new Error('Port not connected');
+        const s = (seq >>> 0) & 0xFFFF;
+        const t = timeoutMs || this._swdDefaultTimeoutMs;
+
+        if (this._swdPending.has(s)) {
+            throw new Error(`SWD seq already pending: ${s}`);
+        }
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._swdPending.delete(s);
+                reject(new Error(`SWD timeout (seq=${s})`));
+            }, t);
+
+            this._swdPending.set(s, { resolve, reject, timer });
+        });
+    }
+
+    async readFromPort() {
+        if (!this.port) return;
+
+        try {
+            this.reader = this.port.readable.getReader();
+            this.inputDone = false;
+
+            while (!this.inputDone && this.port) {
+                try {
+                    const { value, done } = await this.reader.read();
+                    if (done) break;
+
+                    if (value) {
+                        /* Log raw RX bytes at lowest level */
+                        this.consoleLogHex('RX:', value);
+                        this.processEspPackets(value);
+                    }
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        logToConsole(`Read error: ${err.message}`, 'info');
+                    }
+                    break;
+                }
+            }
+        } catch (err) {
+            logToConsole(`ReadFromPort error: ${err.message}`, 'info');
+        } finally {
+            if (this.reader) {
+                this.reader.releaseLock();
+                this.reader = null;
+            }
+            if (!this.inputDone && this.port) {
+                await this.handlePortDisconnect('read_end');
+            }
+        }
+    }
+
+    async sendData(data) {
+        if (!this.port) return;
+        try {
+            const writer = this.port.writable.getWriter();
+            try {
+                await this.sendDataWithWriter(writer, data);
+            } finally {
+                writer.releaseLock();
+            }
+        } catch (err) {
+            logToConsole(`Send data error: ${err.message}`, 'info');
+        }
+    }
+
+    async sendDataWithWriter(writer, data) {
+        /* Fragment data into 64k blocks if needed */
+        const maxPayloadSize = 65534;
+        let offset = 0;
+
+        while (offset < data.length) {
+            const chunkSize = Math.min(maxPayloadSize, data.length - offset);
+            const chunk = data.slice(offset, offset + chunkSize);
+
+            const packet = this.buildPacket(chunk, this.PACKET_TYPE_DATA);
+
+            /* Log raw TX bytes at lowest level */
+            this.consoleLogHex('TX Data:', packet);
+            await writer.write(packet);
+            offset += chunkSize;
+        }
+    }
+
+    async sendPacket(packet, label) {
+        if (!this.port) return;
+        try {
+            const writer = this.port.writable.getWriter();
+            try {
+                this.consoleLogHex(`TX ${label}:`, packet);
+                await writer.write(packet);
+            } finally {
+                writer.releaseLock();
+            }
+        } catch (err) {
+            logToConsole(`Send packet error: ${err.message}`, 'info');
+        }
+    }
+
+    async sendBreak() {
+        let breakLen = parseInt(document.getElementById('breakLenInput').value) || 200;
+        if (breakLen > 200) breakLen = 200;
+        if (breakLen < 0) breakLen = 0;
+        const commandStr = 'B:' + breakLen;
+        const packet = this.buildControlPacket(commandStr);
+        await this.sendPacket(packet, 'Break');
+    }
+
+    async setResetGpio(value) {
+        const command = value ? 'R:1' : 'R:0';
+        const packet = this.buildControlPacket(command);
+        await this.sendPacket(packet, 'Reset');
+    }
+
+    async setControlGpio(value) {
+        const command = value ? 'C:1' : 'C:0';
+        const packet = this.buildControlPacket(command);
+        await this.sendPacket(packet, 'Control');
+    }
+
+    async requestConfig() {
+        if (!this.port) throw new Error('Port not connected');
+        try {
+            const payload = new Uint8Array(12);
+            payload.fill(0);
+
+            const packet = this.buildPacket(payload, this.PACKET_TYPE_CONFIG);
+
+            /* Track if we received a config response */
+            let configReceived = false;
+            const originalConfigCbr = this.config_cbr;
+            this.config_cbr = (packet) => {
+                configReceived = true;
+                if (originalConfigCbr) originalConfigCbr(packet);
+            };
+
+            await this.sendPacket(packet, 'Config Request');
+
+            /* Wait up to 2 seconds for config response - MUST receive it */
+            let waited = 0;
+            while (waited < 2000 && !configReceived) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                waited += 50;
+            }
+
+            this.config_cbr = originalConfigCbr;
+
+            if (!configReceived) {
+                throw new Error('Config request timeout - device did not respond');
+            }
+        } catch (err) {
+            logToConsole(`Config request error: ${err.message}`, 'info');
+            throw err;
+        }
+    }
+
+    async setConfig(configData) {
+        if (!this.port) return;
+        try {
+            /* Build 12-byte payload from config structure */
+            const payload = new Uint8Array(12);
+            payload.fill(0);
+
+            /* baud_rate at offset 0-3 (little-endian) */
+            const baud = configData.baud_rate || 0;
+            payload[0] = baud & 0xFF;
+            payload[1] = (baud >> 8) & 0xFF;
+            payload[2] = (baud >> 16) & 0xFF;
+            payload[3] = (baud >> 24) & 0xFF;
+
+            /* GPIO pins at offsets 4-8 */
+            payload[4] = configData.tx_gpio || 0;
+            payload[5] = configData.rx_gpio || 0;
+            payload[6] = configData.reset_gpio || 0;
+            payload[7] = configData.control_gpio || 0;
+            payload[8] = configData.led_gpio || 0;
+
+            /* Padding at offsets 9-10 */
+            payload[9] = 0;
+            payload[10] = 0;
+
+            /* extended_mode at offset 11 */
+            payload[11] = configData.extended_mode || 0;
+
+            const packet = this.buildPacket(payload, this.PACKET_TYPE_CONFIG);
+
+            const writer = this.port.writable.getWriter();
+            await writer.write(packet);
+            writer.releaseLock();
+        } catch (err) {
+            logToConsole(`Config send error: ${err.message}`, 'info');
+        }
+    }
+
+}
+
+window.EspSerial = EspSerial;
+
+</script>
 
     <style>
         * {
@@ -530,8 +1259,8 @@
         const consoleLineBuffer = [];
 
         /* audio_embed_start */
-        if (window.TADAA_MP3_B64 === undefined) window.TADAA_MP3_B64 = null;
-        /* audio_embed_stop */
+window.TADAA_MP3_B64 = "SUQzAwAAAAARLlRBTEIAAAARAAAB//5XAGkAbgBkAG8AdwBzAFRQRTEAAAAVAAAB//5NAGkAYwByAG8AcwBvAGYAdABDT01NAAAAJAAAAWVuZ//+AAD//ncAaQBuAGgAaQBzAHQAbwByAHkALgBkAGUAVElUMgAAAC0AAAH//lcAaQBuAGQAbwB3AHMAIAAzAC4AMQAgAC8AIABOAFQAIAAzAC4AeAB4AFRZRVIAAAAFAAAAMTk5MgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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/2GPaXRhhs5ggHP////+VVs313NStUxBTUUzLjkzVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVUxBTUUzLjkzVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+5AEXw/wAABmhwAAAAAADNDgAAAAAAGaAAAAAAAAM0AAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVBUEVUQUdFWNAHAACuAAAABAAAAAAAAKAAAAAAAAAAAAcAAAAAAAAATVAzR0FJTl9NSU5NQVgAMDk5LDIwNQsAAAAAAAAATVAzR0FJTl9VTkRPACswMDUsKzAwNSxODAAAAAAAAABSRVBMQVlHQUlOX1RSQUNLX0dBSU4AKzMuMzM1MDAwIGRCCAAAAAAAAABSRVBMQVlHQUlOX1RSQUNLX1BFQUsAMC4yNTM4MDlBUEVUQUdFWNAHAACuAAAABAAAAAAAAIAAAAAAAAAAAFRBR1dpbmRvd3MgMy4xIC8gTlQgMy54eAAAAAAAAAAAAE1pY3Jvc29mdAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdpbmRvd3MAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADE5OTJ3aW5oaXN0b3J5LmRlAAAAAAAAAAAAAAAAAAAAAAD/";
+/* audio_embed_stop */
 
         let scannedAps = [];
         let activeAp = null;

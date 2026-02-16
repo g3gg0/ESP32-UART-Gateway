@@ -8,7 +8,6 @@ class EspSerial {
         this.data_cbr = null; /* Raw UART-like bytes */
         this.config_cbr = null; /* Config packets */
         this.log_cbr = null; /* Parsed ESP log packets */
-        this.swd_cbr = null; /* Parsed SWD response packets */
         this.disconnect_cbr = null; /* Port disconnect callback */
         this._disconnectHandler = null;
         this._disconnecting = false;
@@ -56,10 +55,6 @@ class EspSerial {
 
     setLogCallback(callback) {
         this.log_cbr = callback;
-    }
-
-    setSwdCallback(callback) {
-        this.swd_cbr = callback;
     }
 
     setDisconnectCallback(callback) {
@@ -417,14 +412,6 @@ class EspSerial {
                 pending.resolve(packet);
                 return;
             }
-
-            if (this.swd_cbr) {
-                try {
-                    this.swd_cbr(packet);
-                } catch (err) {
-                    logToConsole(`SWD callback error: ${err.message}`, 'info');
-                }
-            }
         };
 
         if (!this.extendedMode) {
@@ -481,7 +468,7 @@ class EspSerial {
     }
 
     _nextSwdSeq() {
-        /* seq=0 reserved for legacy responses */
+        /* seq=0 reserved */
         let seq = this._swdSeq & 0xFFFF;
         if (seq === 0) seq = 1;
         this._swdSeq = (seq + 1) & 0xFFFF;
@@ -735,25 +722,6 @@ class EspSerial {
         }
     }
 
-    async swdTest(ioMask) {
-        if (!this.port) throw new Error('Port not connected');
-        try {
-            /* Build SWD test command payload: 4 bytes for one uint32_t IO candidate mask */
-            const payload = new Uint8Array(4);
-
-            const io = ioMask >>> 0;
-            payload[0] = io & 0xFF;
-            payload[1] = (io >> 8) & 0xFF;
-            payload[2] = (io >> 16) & 0xFF;
-            payload[3] = (io >> 24) & 0xFF;
-
-            const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_SWD);
-            await this.sendPacket(packet, 'SWD Test');
-        } catch (err) {
-            logToConsole(`SWD test error: ${err.message}`, 'info');
-            throw err;
-        }
-    }
 }
 
 window.EspSerial = EspSerial;

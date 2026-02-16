@@ -27,76 +27,6 @@
 #define NVS_KEY_LED_GPIO "led_gpio"
 #define NVS_KEY_EXTENDED_MODE "ext_mode"
 
-/* ===== SWD UART sub-protocol (inside UART_PACKET_TYPE_SWD payload) =====
- *
- * Legacy mode (still supported for compatibility):
- * - payload length 4: uint32_t io_mask
- * - payload length 8: uint32_t swd_mask + uint32_t swc_mask (ORed)
- *   -> runs a scan once (detect pins + logs), no binary result previously.
- *
- * New mode:
- * - payload begins with swd_uart_req_hdr_t (magic + op + flags + seq)
- * - firmware always enqueues a binary response packet with op|0x80.
- */
-
-#define SWD_UART_MAGIC 0xCAFEu
-
-typedef enum
-{
-    SWD_UART_OP_DETECT_PINS = 0x01,
-    SWD_UART_OP_DEINIT = 0x02,
-    SWD_UART_OP_TRANSFER = 0x03,
-    SWD_UART_OP_AP_READ = 0x10,
-    SWD_UART_OP_AP_READ_SINGLE = 0x11,
-    SWD_UART_OP_AP_WRITE = 0x12,
-} swd_uart_op_t;
-
-typedef enum
-{
-    SWD_UART_STATUS_OK = 0x00,
-    SWD_UART_STATUS_BAD_LEN = 0x01,
-    SWD_UART_STATUS_BAD_OP = 0x02,
-    SWD_UART_STATUS_NOT_INITIALIZED = 0x03,
-    SWD_UART_STATUS_PARITY = 0x04,
-    SWD_UART_STATUS_INTERNAL = 0x7F,
-} swd_uart_status_t;
-
-typedef enum
-{
-    SWD_UART_FLAG_VERBOSE_LOG = 0x01,
-} swd_uart_flags_t;
-
-typedef struct __attribute__((packed))
-{
-    uint16_t magic; /* SWD_UART_MAGIC */
-    uint8_t op;
-    uint8_t flags;
-    uint16_t seq;
-    uint16_t reserved;
-} swd_uart_req_hdr_t;
-
-typedef struct __attribute__((packed))
-{
-    uint16_t magic; /* SWD_UART_MAGIC */
-    uint8_t op;     /* request op | 0x80 */
-    uint8_t status; /* swd_uart_status_t */
-    uint16_t seq;
-    uint8_t swdio_gpio; /* final active SWDIO GPIO or 0xFF */
-    uint8_t swclk_gpio; /* final active SWCLK GPIO or 0xFF */
-    uint8_t ack;        /* SWD ACK (1/2/4) or 8 for parity mismatch, 0 if N/A */
-    uint8_t reserved;
-    uint16_t data_len;
-} swd_uart_rsp_hdr_t;
-
-typedef struct __attribute__((packed))
-{
-    uint32_t dpidr;
-    uint32_t targetid;
-    uint8_t dpidr_ok;
-    uint8_t targetid_ok;
-    uint8_t detected_device;
-    uint8_t reserved;
-} swd_uart_detect_rsp_t;
 
 static bool swd_session_active = false;
 static volatile uint32_t send_message_suppress = 0;
@@ -1339,53 +1269,7 @@ static void cdc_read_task(void *pvParameters)
 
                         case UART_PACKET_TYPE_SWD:
                         {
-                            /* Legacy compatibility: payload is just io_mask (4 bytes) or swd_mask+swc_mask (8 bytes) */
-                            if (payload_needed == 4 || payload_needed == 8)
-                            {
-                                uint32_t io_mask = 0;
-                                if (payload_needed == 8)
-                                {
-                                    uint32_t swd_mask = read_u32_le(&payload_buffer[0]);
-                                    uint32_t swc_mask = read_u32_le(&payload_buffer[4]);
-                                    io_mask = swd_mask | swc_mask;
-                                }
-                                else
-                                {
-                                    io_mask = read_u32_le(payload_buffer);
-                                }
-
-                                send_message("SWD legacy scan: io_mask=0x%08lX", io_mask);
-
-                                if (swd_session_active)
-                                {
-                                    swd_deinit(&swd_ctx);
-                                    memset(&swd_ctx, 0, sizeof(swd_ctx));
-                                    swd_session_active = false;
-                                }
-
-                                swd_init(&swd_ctx, io_mask);
-                                swd_session_active = true;
-                                swd_do_scan(&swd_ctx);
-
-                                swd_uart_detect_rsp_t det = {
-                                    .dpidr = swd_ctx.dp_regs.dpidr,
-                                    .targetid = swd_ctx.dp_regs.targetid,
-                                    .dpidr_ok = (uint8_t)(swd_ctx.dp_regs.dpidr_ok ? 1 : 0),
-                                    .targetid_ok = (uint8_t)(swd_ctx.dp_regs.targetid_ok ? 1 : 0),
-                                    .detected_device = (uint8_t)(swd_ctx.detected_device ? 1 : 0),
-                                    .reserved = 0,
-                                };
-
-                                esp_err_t qerr = swd_queue_response(SWD_UART_OP_DETECT_PINS, 0, SWD_UART_STATUS_OK, 0,
-                                                                   (const uint8_t *)&det, (uint16_t)sizeof(det), true);
-                                if (qerr != ESP_OK)
-                                {
-                                    send_message("SWD legacy: failed to queue response: %s", esp_err_to_name(qerr));
-                                }
-                                break;
-                            }
-
-                            /* New protocol: magic + op + flags + seq */
+                            /* protocol: magic + op + flags + seq */
                             if (payload_needed < sizeof(swd_uart_req_hdr_t))
                             {
                                 send_message("SWD payload too short for hdr: %u", (unsigned)payload_needed);
