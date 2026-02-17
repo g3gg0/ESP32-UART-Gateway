@@ -1113,6 +1113,7 @@ const EMBEDDED_BINARIES = {
 
                 <div class="section">
                     <h2>📡 Flash Device</h2>
+                    <div class="status-box error" id="webSerialNoticeFlash" style="display: none;"></div>
                     <button id="connectBtn" onclick="connectAndFlash()" disabled>Connect & Flash</button>
                     <button id="disconnectBtn" onclick="disconnect()" disabled
                         style="display: none;">Disconnect</button>
@@ -1133,6 +1134,7 @@ const EMBEDDED_BINARIES = {
             <div id="configTool" class="tab-pane hidden">
                 <div class="section">
                     <h2>📡 Configure Device</h2>
+                    <div class="status-box error" id="webSerialNoticeConfig" style="display: none;"></div>
                     <button class="btn-primary" id="cfgConnectBtn" onclick="cfgConnectDevice()">Connect Device</button>
                     <button class="btn-secondary" id="cfgDisconnectBtn" onclick="cfgDisconnectDevice()"
                         style="display: none;">Disconnect</button>
@@ -1287,6 +1289,47 @@ const EMBEDDED_BINARIES = {
         let flasher = null;
         let flashConfig = null;
 
+        function isWebSerialSupported() {
+            return typeof navigator !== 'undefined' && !!navigator.serial;
+        }
+
+        function getWebSerialUnsupportedMessage() {
+            const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+            const isFirefox = /firefox/i.test(ua);
+            if (isFirefox) {
+                return 'WebSerial is not available in Firefox. Please use Microsoft Edge or Google Chrome to flash/configure this device.';
+            }
+            return 'WebSerial is not available in this browser. Please use Microsoft Edge or Google Chrome to flash/configure this device.';
+        }
+
+        function updateWebSerialUiState() {
+            const supported = isWebSerialSupported();
+            const msg = supported ? '' : getWebSerialUnsupportedMessage();
+
+            const flashNotice = document.getElementById('webSerialNoticeFlash');
+            const configNotice = document.getElementById('webSerialNoticeConfig');
+            const connectBtn = document.getElementById('connectBtn');
+            const cfgConnectBtn = document.getElementById('cfgConnectBtn');
+
+            if (flashNotice) {
+                flashNotice.textContent = msg;
+                flashNotice.style.display = supported ? 'none' : 'block';
+            }
+            if (configNotice) {
+                configNotice.textContent = msg;
+                configNotice.style.display = supported ? 'none' : 'block';
+            }
+
+            if (connectBtn) {
+                connectBtn.style.display = supported ? 'inline-block' : 'none';
+            }
+            if (cfgConnectBtn) {
+                cfgConnectBtn.style.display = supported ? 'inline-block' : 'none';
+            }
+
+            return supported;
+        }
+
         /* ============= Hexdump Logging Functions ============= */
         function hexdumpByte(b) {
             return b.toString(16).padStart(2, '0').toUpperCase();
@@ -1399,7 +1442,8 @@ const EMBEDDED_BINARIES = {
             });
             fileList.style.display = 'block';
 
-            document.getElementById('connectBtn').disabled = false;
+            const supported = updateWebSerialUiState();
+            document.getElementById('connectBtn').disabled = !supported;
         }
 
         async function handleJsonSelect(event) {
@@ -1446,6 +1490,13 @@ const EMBEDDED_BINARIES = {
         /* LOAD_BINARY_FILE_END */
 
         async function connectAndFlash() {
+            if (!isWebSerialSupported()) {
+                const msg = getWebSerialUnsupportedMessage();
+                log(msg, 'error');
+                const logSection = document.getElementById('logSection');
+                if (logSection) logSection.style.display = 'block';
+                return;
+            }
             if (!flashConfig) {
                 log('No configuration loaded', 'error');
                 return;
@@ -1538,7 +1589,7 @@ const EMBEDDED_BINARIES = {
                 document.getElementById('logSection').style.display = 'block';
                 updateProgress(0, 'Failed');
                 document.querySelector('.progress-bar').style.display = 'none';
-                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('connectBtn').disabled = !isWebSerialSupported();
                 document.getElementById('disconnectBtn').disabled = true;
             }
         }
@@ -1553,7 +1604,7 @@ const EMBEDDED_BINARIES = {
                 }
                 flasher = null;
             }
-            document.getElementById('connectBtn').disabled = flashConfig ? false : true;
+            document.getElementById('connectBtn').disabled = !isWebSerialSupported() ? true : (flashConfig ? false : true);
             document.getElementById('disconnectBtn').disabled = true;
             document.querySelector('.progress-bar').style.display = 'none';
             document.getElementById('logSection').style.display = 'none';
@@ -1762,6 +1813,10 @@ const EMBEDDED_BINARIES = {
 
         async function cfgConnectDevice() {
             try {
+                if (!isWebSerialSupported()) {
+                    cfgUpdateStatus(getWebSerialUnsupportedMessage(), true);
+                    return;
+                }
                 cfgSerial = new EspSerial();
                 cfgSerial.setConfigCallback((packet) => {
                     cfgUpdateStatus(null);
@@ -1841,6 +1896,7 @@ const EMBEDDED_BINARIES = {
         window.onload = () => {
             log('ESP32-C3 UART Gateway Flasher ready', 'info');
             log('Loading built-in default configuration...', 'info');
+            updateWebSerialUiState();
             autoLoadConfig();
             setActiveTool('flash');
         };
