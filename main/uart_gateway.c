@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "uart_gateway.h"
+#include "can.h"
 #include "led.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -28,79 +29,34 @@
 #define NVS_KEY_EXTENDED_MODE "ext_mode"
 
 
-static bool swd_session_active = false;
+typedef enum
+{
+    UART_GW_MODE_NONE = 0,
+    UART_GW_MODE_UART = 1,
+    UART_GW_MODE_SWD = 2,
+    UART_GW_MODE_CAN = 3,
+} uart_gw_mode_t;
+
+static volatile uart_gw_mode_t current_mode = UART_GW_MODE_NONE;
 static volatile uint32_t send_message_suppress = 0;
 
-/* SWD session context (must be declared before swd_queue_response). */
-static AppFSM swd_ctx;
-
-static inline void send_message_suppress_push(void)
+static void uart_gateway_switch_mode(uart_gw_mode_t new_mode)
 {
-    send_message_suppress++;
-}
-
-static inline void send_message_suppress_pop(void)
-{
-    if (send_message_suppress > 0)
+    if (current_mode == new_mode)
     {
-        send_message_suppress--;
-    }
-}
-
-static uint32_t read_u32_le(const uint8_t *p)
-{
-    return ((uint32_t)p[0]) |
-           ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) |
-           ((uint32_t)p[3] << 24);
-}
-
-static void write_u32_le(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t)(v & 0xFF);
-    p[1] = (uint8_t)((v >> 8) & 0xFF);
-    p[2] = (uint8_t)((v >> 16) & 0xFF);
-    p[3] = (uint8_t)((v >> 24) & 0xFF);
-}
-
-static esp_err_t swd_queue_response(uint8_t req_op, uint16_t seq, swd_uart_status_t status,
-                                    uint8_t ack, const uint8_t *data, uint16_t data_len,
-                                    bool include_pins)
-{
-    uint8_t swdio = 0xFF;
-    uint8_t swclk = 0xFF;
-    if (include_pins && swd_session_active)
-    {
-        swd_get_active_pins(&swd_ctx, &swdio, &swclk);
+        return;
     }
 
-    size_t packet_size = UART_PACKET_HEADER_SIZE + sizeof(swd_uart_rsp_hdr_t) + data_len;
-    uart_packet_header_t *packet = (uart_packet_header_t *)malloc(packet_size);
-    if (!packet)
+    if (current_mode == UART_GW_MODE_SWD)
     {
-        return ESP_ERR_NO_MEM;
+        swd_stop_session();
+    }
+    else if (current_mode == UART_GW_MODE_CAN)
+    {
+        can_stop_session();
     }
 
-    packet->length = (uint16_t)packet_size;
-    packet->type = UART_PACKET_TYPE_SWD;
-
-    swd_uart_rsp_hdr_t *rsp = (swd_uart_rsp_hdr_t *)PTR_BEHIND(packet);
-    rsp->magic = SWD_UART_MAGIC;
-    rsp->op = (uint8_t)(req_op | 0x80);
-    rsp->status = (uint8_t)status;
-    rsp->seq = seq;
-    rsp->swdio_gpio = swdio;
-    rsp->swclk_gpio = swclk;
-    rsp->ack = ack;
-    rsp->reserved = 0;
-    rsp->data_len = data_len;
-
-    if (data_len && data)
-    {
-        memcpy(((uint8_t *)rsp) + sizeof(*rsp), data, data_len);
-    }
-
-    return queue_packet(packet);
+    current_mode = new_mode;
 }
 
 /* Magic bytes: type 0x000A packet with 8-byte payload (length=12 includes header, type=0x000A in little-endian) */
@@ -119,12 +75,12 @@ static TaskHandle_t cdc_read_task_handle = NULL;
 static TaskHandle_t cdc_write_task_handle = NULL;
 static TaskHandle_t uart_read_task_handle = NULL;
 static TaskHandle_t uart_write_task_handle = NULL;
+static TaskHandle_t can_read_task_handle = NULL;
 
 /* Task buffers (global to save stack space) */
 static uint8_t cdc_read_buffer[CDC_BUFFER_SIZE];
 static uint8_t uart_write_buffer[UART_BUFFER_SIZE];
 static uint8_t uart_read_buffer[UART_BUFFER_SIZE];
-/* swd_ctx declared above */
 
 uartgw_config_t uart_current_config;
 
@@ -362,6 +318,39 @@ static bool parse_control_command(const char *cmd, size_t cmd_len)
     memcpy(cmd_buffer, cmd, copy_len);
     cmd_buffer[copy_len] = '\0';
 
+    /* Parse M:x (Gateway mode) - N/U/S/C */
+    if (cmd_buffer[0] == 'M' && cmd_buffer[1] == ':')
+    {
+        char mode = cmd_buffer[2];
+        if (mode >= 'a' && mode <= 'z')
+        {
+            mode = (char)(mode - 'a' + 'A');
+        }
+
+        switch (mode)
+        {
+        case 'N':
+            uart_gateway_switch_mode(UART_GW_MODE_NONE);
+            send_message("Mode set: NONE");
+            return true;
+        case 'U':
+            uart_gateway_switch_mode(UART_GW_MODE_UART);
+            send_message("Mode set: UART");
+            return true;
+        case 'S':
+            uart_gateway_switch_mode(UART_GW_MODE_SWD);
+            send_message("Mode set: SWD");
+            return true;
+        case 'C':
+            uart_gateway_switch_mode(UART_GW_MODE_CAN);
+            send_message("Mode set: CAN");
+            return true;
+        default:
+            send_message("Unknown mode in M: command: '%c'", cmd_buffer[2]);
+            return false;
+        }
+    }
+
     /* Parse R:x (Reset control) */
     if (cmd_buffer[0] == 'R' && cmd_buffer[1] == ':')
     {
@@ -423,9 +412,11 @@ static bool parse_control_command(const char *cmd, size_t cmd_len)
 
         gpio_set_level(gateway_ctx.current_config.tx_gpio, 1);
 
-        reconfigure_uart(&gateway_ctx.current_config);
+        if (current_mode == UART_GW_MODE_UART)
+        {
+            reconfigure_uart(&gateway_ctx.current_config);
+        }
 
-        /* Don't send config response for break commands */
         return true;
     }
     else
@@ -723,6 +714,9 @@ bool uart_gateway_is_ready(void)
 
 void uart_gateway_deinit(void)
 {
+    uart_gateway_switch_mode(UART_GW_MODE_UART);
+    can_stop_session();
+
     if (gateway_ctx.is_configured)
     {
         uart_driver_delete(gateway_ctx.uart_num);
@@ -796,29 +790,19 @@ esp_err_t uart_gateway_save_config(void)
         return err;
     }
 
-    /* Save extended mode */
-    err = nvs_set_u8(nvs_handle, NVS_KEY_EXTENDED_MODE, gateway_ctx.current_config.extended_mode);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to save extended mode: %s", esp_err_to_name(err));
-        nvs_close(nvs_handle);
-        return err;
-    }
-
     /* Commit changes */
     err = nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
 
     if (err == ESP_OK)
     {
-        ESP_LOGI(TAG, "Configuration saved to NVS: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u, EXT_MODE=%u",
+        ESP_LOGI(TAG, "Configuration saved to NVS: baud=%lu, TX=%u, RX=%u, RESET=%u, CONTROL=%u, LED=%u",
                  gateway_ctx.current_config.baud_rate,
                  gateway_ctx.current_config.tx_gpio,
                  gateway_ctx.current_config.rx_gpio,
                  gateway_ctx.current_config.reset_gpio,
                  gateway_ctx.current_config.control_gpio,
-                 gateway_ctx.current_config.led_gpio,
-                 gateway_ctx.current_config.extended_mode);
+                 gateway_ctx.current_config.led_gpio);
     }
     else
     {
@@ -916,20 +900,6 @@ esp_err_t uart_gateway_load_config(uartgw_config_t *loaded_config)
         return err;
     }
 
-    /* Load extended mode (optional, use default 0 if not found) */
-    err = nvs_get_u8(nvs_handle, NVS_KEY_EXTENDED_MODE, &loaded_config->extended_mode);
-    if (err == ESP_ERR_NVS_NOT_FOUND)
-    {
-        loaded_config->extended_mode = 0;
-        ESP_LOGI(TAG, "Extended mode not in NVS, using default: 0");
-        err = ESP_OK;
-    }
-    else if (err != ESP_OK)
-    {
-        ESP_LOGW(TAG, "Failed to load extended mode: %s", esp_err_to_name(err));
-        nvs_close(nvs_handle);
-        return err;
-    }
 
     nvs_close(nvs_handle);
 
@@ -1009,16 +979,35 @@ esp_err_t queue_packet(uart_packet_header_t *packet)
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Queue the packet pointer (block indefinitely for back pressure) */
-    if (xQueueSend(gateway_ctx.uart_to_cdc_buffer, &packet, portMAX_DELAY) == pdTRUE)
+    TickType_t wait_ticks = portMAX_DELAY;
+
+    /* Never let CAN RX frame packets block control path. Drop on full queue. */
+    if (packet->type == UART_PACKET_TYPE_CAN &&
+        packet->length >= (uint16_t)(UART_PACKET_HEADER_SIZE + sizeof(can_uart_rsp_hdr_t)))
+    {
+        const can_uart_rsp_hdr_t *rsp = (const can_uart_rsp_hdr_t *)PTR_BEHIND(packet);
+        if (rsp->op == (uint8_t)(CAN_UART_OP_RX_FRAME | 0x80))
+        {
+            wait_ticks = 0;
+        }
+    }
+
+    if (xQueueSend(gateway_ctx.uart_to_cdc_buffer, &packet, wait_ticks) == pdTRUE)
     {
         taskYIELD();
         return ESP_OK;
     }
 
-    ESP_LOGE(TAG, "Failed to queue packet to UART->CDC");
+    if (wait_ticks == 0)
+    {
+        ESP_LOGW(TAG, "Dropped CAN RX frame packet: UART->CDC queue full");
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to queue packet to UART->CDC");
+    }
     free(packet);
-    return ESP_FAIL;
+    return (wait_ticks == 0) ? ESP_ERR_TIMEOUT : ESP_FAIL;
 }
 
 /* Receive data from UART buffer (intended for CDC) */
@@ -1055,10 +1044,6 @@ static void cdc_read_task(void *pvParameters)
     size_t payload_needed = 0;
     size_t payload_pos = 0;
 
-    /* Normal mode magic detection ring buffer */
-    uint8_t magic_ring[UART_EXTMODE_MAGIC_SIZE] = {0};
-    size_t magic_ring_pos = 0;
-
     /* Wait a bit for system to fully initialize */
     // vTaskDelay(200 / portTICK_PERIOD_MS);
 
@@ -1086,84 +1071,63 @@ static void cdc_read_task(void *pvParameters)
             bytes_read = (int)CDC_BUFFER_SIZE;
         }
 
+        process_payload:
+
         /* NORMAL MODE: search for magic bytes in incoming data */
         if (gateway_ctx.current_config.extended_mode == 0)
         {
-            /* Accumulate bytes in ring buffer */
-            int bytes_to_add = (bytes_read < (int)(UART_EXTMODE_MAGIC_SIZE - magic_ring_pos))
-                                   ? bytes_read
-                                   : (UART_EXTMODE_MAGIC_SIZE - magic_ring_pos);
+            static int magic_check_pos = 0;
+            int bytes_to_send = 0;
 
-            if (bytes_to_add > 0)
+            for(int in_byte_pos = 0; in_byte_pos < bytes_read; in_byte_pos++)
             {
-                memcpy(&magic_ring[magic_ring_pos], cdc_read_buffer, bytes_to_add);
-                magic_ring_pos += bytes_to_add;
-            }
-
-            /* Check if we have enough bytes and if they match magic */
-            if (magic_ring_pos >= UART_EXTMODE_MAGIC_SIZE)
-            {
-                if (memcmp(magic_ring, uart_extmode_magic, UART_EXTMODE_MAGIC_SIZE) == 0)
+                retry:
+                if(cdc_read_buffer[in_byte_pos] == uart_extmode_magic[magic_check_pos])
                 {
-                    /* Magic found! Switch to extended mode */
-                    gateway_ctx.current_config.extended_mode = 1;
-                    header_pos = 0;
-                    if (payload_buffer)
+                    /* if there are any bytes to send before magic sequence */
+                    if(bytes_to_send > 0)
                     {
-                        free(payload_buffer);
-                        payload_buffer = NULL;
+                        led_signal_uart_activity();
+                        uart_gateway_queue_cdc_data(&cdc_read_buffer[in_byte_pos - bytes_to_send], bytes_to_send);
+                        bytes_to_send = 0;
                     }
-                    payload_needed = 0;
-                    payload_pos = 0;
-                    memset(magic_ring, 0, sizeof(magic_ring));
-                    magic_ring_pos = 0;
 
-                    send_message("Extended mode activated (temporary, until reboot)");
+                    /* increase check position */
+                    magic_check_pos++;
 
-                    /* Process any remaining bytes in this read as extended mode */
-                    if (bytes_to_add < bytes_read)
+                    if(magic_check_pos == UART_EXTMODE_MAGIC_SIZE)
                     {
-                        int remaining = bytes_read - bytes_to_add;
-                        memmove(cdc_read_buffer, &cdc_read_buffer[bytes_to_add], remaining);
-                        bytes_read = remaining;
-                        /* Fall through to extended mode processing below */
-                    }
-                    else
-                    {
-                        continue;
+                        /* Magic found! Switch to extended mode */
+                        gateway_ctx.current_config.extended_mode = 1;
+                        send_message("Extended mode activated (temporary, until reboot)");
+                        magic_check_pos = 0;
+                        memmove(&cdc_read_buffer[0], &cdc_read_buffer[in_byte_pos + 1], bytes_read - in_byte_pos - 1);
+                        bytes_read -= (in_byte_pos + 1);
+
+                        /* process remaining bytes as extended mode packet */
+                        goto process_payload; 
                     }
                 }
                 else
                 {
-                    /* Not magic, shift buffer forward and queue first byte */
-                    led_signal_uart_activity();
-                    uart_gateway_queue_cdc_data(&magic_ring[0], 1);
-
-                    /* Shift remaining bytes forward */
-                    memmove(magic_ring, &magic_ring[1], UART_EXTMODE_MAGIC_SIZE - 1);
-                    magic_ring_pos = UART_EXTMODE_MAGIC_SIZE - 1;
-
-                    /* Add next byte from current read if available */
-                    if (bytes_to_add < bytes_read)
+                    if(magic_check_pos > 0)
                     {
-                        magic_ring[magic_ring_pos] = cdc_read_buffer[bytes_to_add];
-                        magic_ring_pos++;
+                        led_signal_uart_activity();
+                        uart_gateway_queue_cdc_data(uart_extmode_magic, magic_check_pos);
+                        magic_check_pos = 0;
 
-                        /* Queue remaining bytes from this read */
-                        int remaining = bytes_read - bytes_to_add - 1;
-                        if (remaining > 0)
-                        {
-                            led_signal_uart_activity();
-                            uart_gateway_queue_cdc_data(&cdc_read_buffer[bytes_to_add + 1], remaining);
-                        }
+                        /* re-check this byte in case it's the start of the magic sequence */
+                        goto retry; 
                     }
-                    continue;
+                    bytes_to_send++;
                 }
             }
-            else
+
+            /* if there are any bytes to send before buffer end, send them */
+            if(bytes_to_send > 0)
             {
-                /* Not enough bytes yet, continue accumulating */
-                continue;
+                led_signal_uart_activity();
+                uart_gateway_queue_cdc_data(&cdc_read_buffer[bytes_read - bytes_to_send], bytes_to_send);
             }
         }
 
@@ -1235,12 +1199,16 @@ static void cdc_read_task(void *pvParameters)
                         {
                         case UART_PACKET_TYPE_DATA:
                             /* Type 0x00: Normal serial data - send to UART */
-                            led_signal_uart_activity();
-                            uart_gateway_queue_cdc_data(payload_buffer, payload_needed);
+                            if (current_mode == UART_GW_MODE_UART)
+                            {
+                                led_signal_uart_activity();
+                                uart_gateway_queue_cdc_data(payload_buffer, payload_needed);
+                            }
                             break;
 
                         case UART_PACKET_TYPE_CONFIG:
                             /* Type 0x01: Configuration packet */
+                            uart_gateway_switch_mode(UART_GW_MODE_UART);
                             if (parse_config_packet(payload_buffer, payload_needed, &new_config))
                             {
                                 if (new_config.baud_rate == 0)
@@ -1269,205 +1237,16 @@ static void cdc_read_task(void *pvParameters)
 
                         case UART_PACKET_TYPE_SWD:
                         {
-                            /* protocol: magic + op + flags + seq */
-                            if (payload_needed < sizeof(swd_uart_req_hdr_t))
-                            {
-                                send_message("SWD payload too short for hdr: %u", (unsigned)payload_needed);
-                                (void)swd_queue_response(0x00, 0, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, false);
-                                break;
-                            }
+                            uart_gateway_switch_mode(UART_GW_MODE_SWD);
+                            (void)swd_handle_packet(payload_buffer, payload_needed);
 
-                            const swd_uart_req_hdr_t *req = (const swd_uart_req_hdr_t *)payload_buffer;
-                            if (req->magic != SWD_UART_MAGIC)
-                            {
-                                send_message("SWD bad magic: 0x%04X (len=%u)", req->magic, (unsigned)payload_needed);
-                                (void)swd_queue_response(req->op, req->seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, false);
-                                break;
-                            }
+                            break;
+                        }
 
-                            const uint8_t *args = payload_buffer + sizeof(*req);
-                            size_t arg_len = payload_needed - sizeof(*req);
-                            uint8_t op = req->op;
-                            uint8_t flags = req->flags;
-                            uint16_t seq = req->seq;
-
-                            if (flags & SWD_UART_FLAG_VERBOSE_LOG)
-                            {
-                                send_message("SWD op=0x%02X seq=%u len=%u", op, (unsigned)seq, (unsigned)arg_len);
-                            }
-
-                            switch (op)
-                            {
-                            case SWD_UART_OP_DETECT_PINS:
-                            {
-                                if (arg_len < 4)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
-                                    break;
-                                }
-
-                                uint32_t io_mask = read_u32_le(args);
-                                if (flags & SWD_UART_FLAG_VERBOSE_LOG)
-                                {
-                                    send_message("SWD detect: io_mask=0x%08lX", io_mask);
-                                }
-
-                                bool quiet = ((flags & SWD_UART_FLAG_VERBOSE_LOG) == 0);
-                                if (quiet)
-                                {
-                                    send_message_suppress_push();
-                                }
-
-                                if (swd_session_active)
-                                {
-                                    swd_deinit(&swd_ctx);
-                                    memset(&swd_ctx, 0, sizeof(swd_ctx));
-                                    swd_session_active = false;
-                                }
-
-                                swd_init(&swd_ctx, io_mask);
-                                swd_session_active = true;
-                                swd_do_scan(&swd_ctx);
-
-                                swd_uart_detect_rsp_t det = {
-                                    .dpidr = swd_ctx.dp_regs.dpidr,
-                                    .targetid = swd_ctx.dp_regs.targetid,
-                                    .dpidr_ok = (uint8_t)(swd_ctx.dp_regs.dpidr_ok ? 1 : 0),
-                                    .targetid_ok = (uint8_t)(swd_ctx.dp_regs.targetid_ok ? 1 : 0),
-                                    .detected_device = (uint8_t)(swd_ctx.detected_device ? 1 : 0),
-                                    .reserved = 0,
-                                };
-
-                                if (quiet)
-                                {
-                                    send_message_suppress_pop();
-                                }
-
-                                esp_err_t qerr = swd_queue_response(op, seq, SWD_UART_STATUS_OK, 0,
-                                                                   (const uint8_t *)&det, (uint16_t)sizeof(det), true);
-                                if (qerr != ESP_OK)
-                                {
-                                    ESP_LOGE(TAG, "SWD: failed to queue detect response: %s", esp_err_to_name(qerr));
-                                }
-                                break;
-                            }
-
-                            case SWD_UART_OP_DEINIT:
-                            {
-                                if (!swd_session_active)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, false);
-                                    break;
-                                }
-                                swd_deinit(&swd_ctx);
-                                memset(&swd_ctx, 0, sizeof(swd_ctx));
-                                swd_session_active = false;
-                                (void)swd_queue_response(op, seq, SWD_UART_STATUS_OK, 0, NULL, 0, false);
-                                break;
-                            }
-
-                            case SWD_UART_OP_TRANSFER:
-                            {
-                                if (!swd_session_active)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
-                                    break;
-                                }
-                                if (arg_len < 8)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
-                                    break;
-                                }
-
-                                bool ap = args[0] ? true : false;
-                                bool write = args[1] ? true : false;
-                                uint8_t a23 = args[2] & 0x03;
-                                uint32_t data = read_u32_le(&args[4]);
-
-                                uint8_t ack = swd_uart_transfer(&swd_ctx, ap, write, a23, &data);
-                                uint8_t out[4];
-                                write_u32_le(out, data);
-
-                                swd_uart_status_t st = SWD_UART_STATUS_OK;
-                                if (ack == 8)
-                                {
-                                    st = SWD_UART_STATUS_PARITY;
-                                }
-
-                                esp_err_t qerr = swd_queue_response(op, seq, st, ack, out, 4, true);
-                                if (qerr != ESP_OK)
-                                {
-                                    ESP_LOGE(TAG, "SWD: failed to queue transfer response: %s", esp_err_to_name(qerr));
-                                }
-                                break;
-                            }
-
-                            case SWD_UART_OP_AP_READ:
-                            case SWD_UART_OP_AP_READ_SINGLE:
-                            {
-                                if (!swd_session_active)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
-                                    break;
-                                }
-                                if (arg_len < 4)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
-                                    break;
-                                }
-
-                                uint8_t ap = args[0];
-                                uint8_t ap_off = args[1];
-                                uint32_t data = 0;
-                                uint8_t ack = 0;
-                                if (op == SWD_UART_OP_AP_READ_SINGLE)
-                                {
-                                    ack = swd_uart_read_ap_single(&swd_ctx, ap, ap_off, &data);
-                                }
-                                else
-                                {
-                                    ack = swd_uart_read_ap(&swd_ctx, ap, ap_off, &data);
-                                }
-
-                                uint8_t out[4];
-                                write_u32_le(out, data);
-                                esp_err_t qerr = swd_queue_response(op, seq, SWD_UART_STATUS_OK, ack, out, 4, true);
-                                if (qerr != ESP_OK)
-                                {
-                                    ESP_LOGE(TAG, "SWD: failed to queue ap read response: %s", esp_err_to_name(qerr));
-                                }
-                                break;
-                            }
-
-                            case SWD_UART_OP_AP_WRITE:
-                            {
-                                if (!swd_session_active)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
-                                    break;
-                                }
-                                if (arg_len < 8)
-                                {
-                                    (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
-                                    break;
-                                }
-
-                                uint8_t ap = args[0];
-                                uint8_t ap_off = args[1];
-                                uint32_t data = read_u32_le(&args[4]);
-                                uint8_t ack = swd_uart_write_ap(&swd_ctx, ap, ap_off, data);
-                                esp_err_t qerr = swd_queue_response(op, seq, SWD_UART_STATUS_OK, ack, NULL, 0, true);
-                                if (qerr != ESP_OK)
-                                {
-                                    ESP_LOGE(TAG, "SWD: failed to queue ap write response: %s", esp_err_to_name(qerr));
-                                }
-                                break;
-                            }
-
-                            default:
-                                (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_OP, 0, NULL, 0, true);
-                                break;
-                            }
+                        case UART_PACKET_TYPE_CAN:
+                        {
+                            uart_gateway_switch_mode(UART_GW_MODE_CAN);
+                            (void)can_handle_packet(payload_buffer, payload_needed);
 
                             break;
                         }
@@ -1510,6 +1289,12 @@ static void uart_write_task(void *pvParameters)
             continue;
         }
 
+        if (current_mode != UART_GW_MODE_UART)
+        {
+            vTaskDelay(20 / portTICK_PERIOD_MS);
+            continue;
+        }
+
         bytes_to_send = uart_gateway_receive_cdc_queue(uart_write_buffer, UART_BUFFER_SIZE);
 
         if (bytes_to_send <= 0)
@@ -1546,6 +1331,12 @@ static void uart_read_task(void *pvParameters)
         if (!uart_gateway_is_ready())
         {
             vTaskDelay(50 / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        if (current_mode != UART_GW_MODE_UART)
+        {
+            vTaskDelay(20 / portTICK_PERIOD_MS);
             continue;
         }
 
@@ -1700,13 +1491,15 @@ void uart_gateway_start(void)
     BaseType_t ret2 = xTaskCreatePinnedToCore(uart_write_task, "uart_write", 4096, NULL, 5, &uart_write_task_handle, 0);
     BaseType_t ret3 = xTaskCreatePinnedToCore(uart_read_task, "uart_read", 4096, NULL, 5, &uart_read_task_handle, 0);
     BaseType_t ret4 = xTaskCreatePinnedToCore(cdc_write_task, "cdc_write", 4096, NULL, 5, &cdc_write_task_handle, 0);
+    BaseType_t ret5 = xTaskCreatePinnedToCore(can_read_task, "can_read", 4096, NULL, 5, &can_read_task_handle, 0);
 
     ESP_LOGI(TAG, "CDC read task creation: %s", ret1 == pdPASS ? "OK" : "FAILED");
     ESP_LOGI(TAG, "UART write task creation: %s", ret2 == pdPASS ? "OK" : "FAILED");
     ESP_LOGI(TAG, "UART read task creation: %s", ret3 == pdPASS ? "OK" : "FAILED");
     ESP_LOGI(TAG, "CDC write task creation: %s", ret4 == pdPASS ? "OK" : "FAILED");
+    ESP_LOGI(TAG, "CAN read task creation: %s", ret5 == pdPASS ? "OK" : "FAILED");
 
-    if (!(ret1 == pdPASS && ret2 == pdPASS && ret3 == pdPASS && ret4 == pdPASS))
+    if (!(ret1 == pdPASS && ret2 == pdPASS && ret3 == pdPASS && ret4 == pdPASS && ret5 == pdPASS))
     {
         ESP_LOGE(TAG, "Failed to create some relay tasks");
         return;
@@ -1738,6 +1531,14 @@ void uart_gateway_stop(void)
         vTaskDelete(cdc_write_task_handle);
         cdc_write_task_handle = NULL;
     }
+    if (can_read_task_handle)
+    {
+        vTaskDelete(can_read_task_handle);
+        can_read_task_handle = NULL;
+    }
+
+    uart_gateway_switch_mode(UART_GW_MODE_UART);
+    can_stop_session();
 
     /* Uninstall USB CDC */
     usb_serial_jtag_driver_uninstall();

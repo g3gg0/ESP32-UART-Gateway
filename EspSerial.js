@@ -1,4 +1,14 @@
 /* ============= EspSerial Class ============= */
+if (typeof globalThis.logToConsole !== 'function') {
+    globalThis.logToConsole = function(message, level) {
+        if (level === 'error') {
+            console.error(message);
+        } else {
+            console.log(message);
+        }
+    };
+}
+
 class EspSerial {
     constructor() {
         this.port = null;
@@ -8,6 +18,7 @@ class EspSerial {
         this.data_cbr = null; /* Raw UART-like bytes */
         this.config_cbr = null; /* Config packets */
         this.log_cbr = null; /* Parsed ESP log packets */
+        this.can_cbr = null; /* Parsed CAN packets */
         this.disconnect_cbr = null; /* Port disconnect callback */
         this._disconnectHandler = null;
         this._disconnecting = false;
@@ -16,6 +27,11 @@ class EspSerial {
         this._swdSeq = 1;
         this._swdPending = new Map(); /* seq -> { resolve, reject, timer } */
         this._swdDefaultTimeoutMs = 1500;
+
+        /* CAN request/response tracking */
+        this._canSeq = 1;
+        this._canPending = new Map(); /* seq -> { resolve, reject, timer } */
+        this._canDefaultTimeoutMs = 1500;
 
         /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
         this.EXTMODE_MAGIC = new Uint8Array([
@@ -33,6 +49,7 @@ class EspSerial {
         this.PACKET_TYPE_CONTROL = 0x02;
         this.PACKET_TYPE_LOG = 0x03;
         this.UART_PACKET_TYPE_SWD = 0x04;
+        this.UART_PACKET_TYPE_CAN = 0x05;
 
         this.CTRL_CMD_SIZE = 16;
         this.LOGMSG_MAX_LEN = 256;
@@ -55,6 +72,10 @@ class EspSerial {
 
     setLogCallback(callback) {
         this.log_cbr = callback;
+    }
+
+    setCanCallback(callback) {
+        this.can_cbr = callback;
     }
 
     setDisconnectCallback(callback) {
@@ -210,6 +231,7 @@ class EspSerial {
 
     notifyDisconnect(info) {
         this._rejectAllSwdPending(new Error('Disconnected'));
+        this._rejectAllCanPending(new Error('Disconnected'));
         if (this.disconnect_cbr) {
             try {
                 this.disconnect_cbr(info);
@@ -233,6 +255,23 @@ class EspSerial {
                 }
             }
             this._swdPending.delete(seq);
+        }
+    }
+
+    _rejectAllCanPending(err) {
+        if (!this._canPending || this._canPending.size === 0) return;
+        for (const [seq, entry] of this._canPending.entries()) {
+            if (entry && entry.timer) {
+                clearTimeout(entry.timer);
+            }
+            if (entry && entry.reject) {
+                try {
+                    entry.reject(err);
+                } catch (e) {
+                    /* ignore */
+                }
+            }
+            this._canPending.delete(seq);
         }
     }
 
@@ -310,10 +349,10 @@ class EspSerial {
     processEspPackets(data) {
         this.rxBuffer = this.appendBuffer(this.rxBuffer, data);
 
-        const emitData = (chunk) => {
+        const emitData = (chunk, packetType = this.PACKET_TYPE_DATA) => {
             if (!chunk || chunk.length === 0) return;
             if (this.data_cbr) {
-                this.data_cbr(chunk);
+                this.data_cbr(chunk, { packetType: packetType >>> 0, extendedMode: !!this.extendedMode });
             }
         };
 
@@ -369,13 +408,13 @@ class EspSerial {
 
         const emitSwd = (payload) => {
             if (!payload || payload.length < 12) {
-                return;
+                return false;
             }
 
             const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
             const magic = view.getUint16(0, true);
             if (magic !== 0xCAFE) {
-                return;
+                return false;
             }
 
             const op = payload[2] >>> 0;
@@ -387,7 +426,7 @@ class EspSerial {
             const data_len = view.getUint16(10, true) >>> 0;
 
             if (payload.length < 12 + data_len) {
-                return;
+                return false;
             }
 
             const data = payload.slice(12, 12 + data_len);
@@ -410,14 +449,67 @@ class EspSerial {
                 if (pending.timer) clearTimeout(pending.timer);
                 this._swdPending.delete(seq);
                 pending.resolve(packet);
-                return;
+                return true;
             }
+
+            return true;
+        };
+
+        const emitCan = (payload) => {
+            if (!payload || payload.length < 12) {
+                return false;
+            }
+
+            const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+            const magic = view.getUint16(0, true);
+            if (magic !== 0xBEEF) {
+                return false;
+            }
+
+            const op = payload[2] >>> 0;
+            const status = payload[3] >>> 0;
+            const seq = view.getUint16(4, true) >>> 0;
+            const can_rx_gpio = payload[6] >>> 0;
+            const can_tx_gpio = payload[7] >>> 0;
+            const data_len = view.getUint16(10, true) >>> 0;
+
+            if (payload.length < 12 + data_len) {
+                return false;
+            }
+
+            const data = payload.slice(12, 12 + data_len);
+            const packet = {
+                type: 'can_packet',
+                op,
+                req_op: (op & 0x7F) >>> 0,
+                is_response: ((op & 0x80) !== 0),
+                status,
+                seq,
+                can_rx_gpio,
+                can_tx_gpio,
+                data,
+                raw: payload
+            };
+
+            const pending = this._canPending.get(seq);
+            if (pending) {
+                if (pending.timer) clearTimeout(pending.timer);
+                this._canPending.delete(seq);
+                pending.resolve(packet);
+                return true;
+            }
+
+            if (this.can_cbr) {
+                this.can_cbr(packet);
+            }
+
+            return true;
         };
 
         if (!this.extendedMode) {
             /* In non-extended mode, just pass through all data */
             if (this.rxBuffer.length > 0) {
-                emitData(this.rxBuffer);
+                emitData(this.rxBuffer, 0xFFFF);
                 this.rxBuffer = new Uint8Array(0);
             }
             return;
@@ -447,10 +539,12 @@ class EspSerial {
             const payload = this.rxBuffer.slice(this.PACKET_HEADER_SIZE, totalLen);
             this.rxBuffer = this.rxBuffer.slice(totalLen);
 
+            // console.log(`Received packet: type=0x${type.toString(16)} length=${payloadLen}`);
+
             /* Handle packet based on type */
             if (type === this.PACKET_TYPE_DATA) {
                 /* Type 0x00: Normal serial data */
-                emitData(payload);
+                emitData(payload, this.PACKET_TYPE_DATA);
             } else if (type === this.PACKET_TYPE_CONFIG) {
                 /* Type 0x01: Config response */
                 emitConfig(payload);
@@ -460,9 +554,12 @@ class EspSerial {
             } else if (type === this.UART_PACKET_TYPE_SWD) {
                 /* Type 0x04: SWD binary responses */
                 emitSwd(payload);
+            } else if (type === this.UART_PACKET_TYPE_CAN) {
+                /* Type 0x05: CAN binary packets */
+                emitCan(payload);
             } else {
                 /* Unknown packet type, pass through as data */
-                emitData(payload);
+                emitData(payload, type);
             }
         }
     }
@@ -482,6 +579,31 @@ class EspSerial {
         /* magic 0xCAFE little-endian */
         out[0] = 0xFE;
         out[1] = 0xCA;
+        out[2] = op & 0xFF;
+        out[3] = flags & 0xFF;
+        out[4] = seq & 0xFF;
+        out[5] = (seq >> 8) & 0xFF;
+        out[6] = 0;
+        out[7] = 0;
+        if (a.length) out.set(a, 8);
+        return out;
+    }
+
+    _nextCanSeq() {
+        /* seq=0 reserved */
+        let seq = this._canSeq & 0xFFFF;
+        if (seq === 0) seq = 1;
+        this._canSeq = (seq + 1) & 0xFFFF;
+        if (this._canSeq === 0) this._canSeq = 1;
+        return seq;
+    }
+
+    _buildCanRequestPayload(op, flags, seq, args) {
+        const a = args ? (args instanceof Uint8Array ? args : new Uint8Array(args)) : new Uint8Array(0);
+        const out = new Uint8Array(8 + a.length);
+        /* magic 0xBEEF little-endian */
+        out[0] = 0xEF;
+        out[1] = 0xBE;
         out[2] = op & 0xFF;
         out[3] = flags & 0xFF;
         out[4] = seq & 0xFF;
@@ -540,6 +662,38 @@ class EspSerial {
             }, t);
 
             this._swdPending.set(s, { resolve, reject, timer });
+        });
+    }
+
+    async canRequest(op, args, options) {
+        if (!this.port) throw new Error('Port not connected');
+        const opt = options || {};
+        const flags = (opt.flags || 0) & 0xFF;
+        const timeoutMs = opt.timeoutMs || this._canDefaultTimeoutMs;
+        const seq = (opt.seq !== undefined) ? (opt.seq & 0xFFFF) : this._nextCanSeq();
+
+        if (this._canPending.has(seq)) {
+            throw new Error(`CAN seq collision: ${seq}`);
+        }
+
+        const payload = this._buildCanRequestPayload(op, flags, seq, args);
+        const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_CAN);
+
+        return new Promise(async (resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._canPending.delete(seq);
+                reject(new Error(`CAN timeout (op=0x${op.toString(16)}, seq=${seq})`));
+            }, timeoutMs);
+
+            this._canPending.set(seq, { resolve, reject, timer });
+
+            try {
+                await this.sendPacket(packet, `CAN op=0x${op.toString(16)} seq=${seq}`);
+            } catch (err) {
+                clearTimeout(timer);
+                this._canPending.delete(seq);
+                reject(err);
+            }
         });
     }
 
@@ -632,20 +786,37 @@ class EspSerial {
         if (breakLen > 200) breakLen = 200;
         if (breakLen < 0) breakLen = 0;
         const commandStr = 'B:' + breakLen;
-        const packet = this.buildControlPacket(commandStr);
-        await this.sendPacket(packet, 'Break');
+        await this.sendControlCommand(commandStr, 'Break');
     }
 
     async setResetGpio(value) {
         const command = value ? 'R:1' : 'R:0';
-        const packet = this.buildControlPacket(command);
-        await this.sendPacket(packet, 'Reset');
+        await this.sendControlCommand(command, 'Reset');
     }
 
     async setControlGpio(value) {
         const command = value ? 'C:1' : 'C:0';
+        await this.sendControlCommand(command, 'Control');
+    }
+
+    async sendControlCommand(command, label = 'Control') {
+        if (!this.port) throw new Error('Port not connected');
         const packet = this.buildControlPacket(command);
-        await this.sendPacket(packet, 'Control');
+        await this.sendPacket(packet, label);
+    }
+
+    async setGatewayMode(mode) {
+        if (!this.port) throw new Error('Port not connected');
+
+        const raw = String(mode || '').trim().toUpperCase();
+        let token = '';
+        if (raw === 'NONE' || raw === 'N') token = 'N';
+        else if (raw === 'UART' || raw === 'U') token = 'U';
+        else if (raw === 'SWD' || raw === 'S') token = 'S';
+        else if (raw === 'CAN' || raw === 'C') token = 'C';
+        else throw new Error(`Unknown gateway mode: ${mode}`);
+
+        await this.sendControlCommand(`M:${token}`, `Mode:${raw}`);
     }
 
     async requestConfig() {

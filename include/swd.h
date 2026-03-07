@@ -9,12 +9,15 @@
 #include "freertos/semphr.h"
 #include "uart_gateway.h"
 
+/* SWD module logger (supports temporary suppression during noisy operations) */
+void swd_log_message(const char *fmt, ...);
+
 /* short debug message */
-#define DBGS(format) send_message("%s: " format, __FUNCTION__)
+#define DBGS(format) swd_log_message("%s: " format, __FUNCTION__)
 /* formatted debug message */
-#define DBG(format, ...) send_message("%s: " format, __FUNCTION__, __VA_ARGS__)
+#define DBG(format, ...) swd_log_message("%s: " format, __FUNCTION__, __VA_ARGS__)
 /* log message*/
-#define LOG(...) send_message(__VA_ARGS__)
+#define LOG(...) swd_log_message(__VA_ARGS__)
 
 
 typedef struct {
@@ -191,3 +194,8 @@ uint8_t swd_uart_transfer(AppFSM *ctx, bool ap, bool write, uint8_t a23, uint32_
 uint8_t swd_uart_read_ap(AppFSM *ctx, uint8_t ap, uint8_t ap_off, uint32_t *data);
 uint8_t swd_uart_read_ap_single(AppFSM *ctx, uint8_t ap, uint8_t ap_off, uint32_t *data);
 uint8_t swd_uart_write_ap(AppFSM *ctx, uint8_t ap, uint8_t ap_off, uint32_t data);
+
+/* UART_PACKET_TYPE_SWD session helpers */
+esp_err_t swd_start_session(uint32_t io_mask, bool quiet);
+void swd_stop_session(void);
+esp_err_t swd_handle_packet(const uint8_t *payload, size_t payload_len);

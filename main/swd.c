@@ -15,7 +15,356 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+static bool swd_session_active = false;
+static AppFSM swd_ctx;
+static volatile uint32_t swd_log_suppress = 0;
+
 static const uint32_t gpio_legal_mask = 0x3007FF;
+
+void swd_log_message(const char *fmt, ...)
+{
+    if (!fmt || swd_log_suppress)
+    {
+        return;
+    }
+
+    char message[UART_LOGMSG_MAX_LEN];
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+
+    if (written < 0)
+    {
+        return;
+    }
+
+    send_message("%s", message);
+}
+
+static inline void swd_log_suppress_push(void)
+{
+    swd_log_suppress++;
+}
+
+static inline void swd_log_suppress_pop(void)
+{
+    if (swd_log_suppress > 0)
+    {
+        swd_log_suppress--;
+    }
+}
+
+static uint32_t read_u32_le(const uint8_t *p)
+{
+    return ((uint32_t)p[0]) |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static void write_u32_le(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v & 0xFF);
+    p[1] = (uint8_t)((v >> 8) & 0xFF);
+    p[2] = (uint8_t)((v >> 16) & 0xFF);
+    p[3] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+static esp_err_t swd_queue_response(uint8_t req_op, uint16_t seq, swd_uart_status_t status,
+                                    uint8_t ack, const uint8_t *data, uint16_t data_len,
+                                    bool include_pins)
+{
+    uint8_t swdio = 0xFF;
+    uint8_t swclk = 0xFF;
+    if (include_pins && swd_session_active)
+    {
+        swd_get_active_pins(&swd_ctx, &swdio, &swclk);
+    }
+
+    size_t packet_size = UART_PACKET_HEADER_SIZE + sizeof(swd_uart_rsp_hdr_t) + data_len;
+    uart_packet_header_t *packet = (uart_packet_header_t *)malloc(packet_size);
+    if (!packet)
+    {
+        return ESP_ERR_NO_MEM;
+    }
+
+    packet->length = (uint16_t)packet_size;
+    packet->type = UART_PACKET_TYPE_SWD;
+
+    swd_uart_rsp_hdr_t *rsp = (swd_uart_rsp_hdr_t *)PTR_BEHIND(packet);
+    rsp->magic = SWD_UART_MAGIC;
+    rsp->op = (uint8_t)(req_op | 0x80);
+    rsp->status = (uint8_t)status;
+    rsp->seq = seq;
+    rsp->swdio_gpio = swdio;
+    rsp->swclk_gpio = swclk;
+    rsp->ack = ack;
+    rsp->reserved = 0;
+    rsp->data_len = data_len;
+
+    if (data_len && data)
+    {
+        memcpy(((uint8_t *)rsp) + sizeof(*rsp), data, data_len);
+    }
+
+    return queue_packet(packet);
+}
+
+static void swd_release_selected_pins(const AppFSM *ctx)
+{
+    if (!ctx)
+    {
+        return;
+    }
+
+    uint32_t selected = ctx->io_selected;
+    for (int io = 0; io < 32; io++)
+    {
+        uint32_t bitmask = (1U << io);
+        if ((selected & bitmask) == 0)
+        {
+            continue;
+        }
+
+        gpio_set_direction((gpio_num_t)io, GPIO_MODE_INPUT);
+        gpio_set_pull_mode((gpio_num_t)io, GPIO_FLOATING);
+    }
+
+    if (ctx->io_num_swd < 32)
+    {
+        gpio_set_direction((gpio_num_t)ctx->io_num_swd, GPIO_MODE_INPUT);
+        gpio_set_pull_mode((gpio_num_t)ctx->io_num_swd, GPIO_FLOATING);
+    }
+    if (ctx->io_num_swc < 32)
+    {
+        gpio_set_direction((gpio_num_t)ctx->io_num_swc, GPIO_MODE_INPUT);
+        gpio_set_pull_mode((gpio_num_t)ctx->io_num_swc, GPIO_FLOATING);
+    }
+}
+
+void swd_stop_session(void)
+{
+    if (!swd_session_active)
+    {
+        return;
+    }
+
+    swd_release_selected_pins(&swd_ctx);
+    swd_deinit(&swd_ctx);
+    memset(&swd_ctx, 0, sizeof(swd_ctx));
+    swd_session_active = false;
+}
+
+esp_err_t swd_start_session(uint32_t io_mask, bool quiet)
+{
+    uint32_t legal_io_mask = io_mask & gpio_legal_mask;
+
+    if (quiet)
+    {
+        swd_log_suppress_push();
+    }
+
+    if (swd_session_active)
+    {
+        if (swd_ctx.io_selected != legal_io_mask)
+        {
+            swd_stop_session();
+        }
+    }
+
+    if (!swd_session_active)
+    {
+        swd_init(&swd_ctx, legal_io_mask);
+        swd_session_active = true;
+    }
+
+    swd_do_scan(&swd_ctx);
+
+    if (quiet)
+    {
+        swd_log_suppress_pop();
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t swd_handle_packet(const uint8_t *payload, size_t payload_len)
+{
+    if (!payload)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (payload_len < sizeof(swd_uart_req_hdr_t))
+    {
+        send_message("SWD payload too short for hdr: %u", (unsigned)payload_len);
+        (void)swd_queue_response(0x00, 0, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, false);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    const swd_uart_req_hdr_t *req = (const swd_uart_req_hdr_t *)payload;
+    if (req->magic != SWD_UART_MAGIC)
+    {
+        send_message("SWD bad magic: 0x%04X (len=%u)", req->magic, (unsigned)payload_len);
+        (void)swd_queue_response(req->op, req->seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, false);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    const uint8_t *args = payload + sizeof(*req);
+    size_t arg_len = payload_len - sizeof(*req);
+    uint8_t op = req->op;
+    uint8_t flags = req->flags;
+    uint16_t seq = req->seq;
+
+    if (flags & SWD_UART_FLAG_VERBOSE_LOG)
+    {
+        send_message("SWD op=0x%02X seq=%u len=%u", op, (unsigned)seq, (unsigned)arg_len);
+    }
+
+    switch (op)
+    {
+    case SWD_UART_OP_DETECT_PINS:
+    {
+        if (arg_len < 4)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+            return ESP_ERR_INVALID_SIZE;
+        }
+
+        uint32_t io_mask = read_u32_le(args);
+        if (flags & SWD_UART_FLAG_VERBOSE_LOG)
+        {
+            send_message("SWD detect: io_mask=0x%08lX", io_mask);
+        }
+
+        bool quiet = ((flags & SWD_UART_FLAG_VERBOSE_LOG) == 0);
+        swd_uart_detect_rsp_t det = {
+            .dpidr = swd_ctx.dp_regs.dpidr,
+            .targetid = swd_ctx.dp_regs.targetid,
+            .dpidr_ok = (uint8_t)(swd_ctx.dp_regs.dpidr_ok ? 1 : 0),
+            .targetid_ok = (uint8_t)(swd_ctx.dp_regs.targetid_ok ? 1 : 0),
+            .detected_device = (uint8_t)(swd_ctx.detected_device ? 1 : 0),
+            .reserved = 0,
+        };
+
+        esp_err_t serr = swd_start_session(io_mask, quiet);
+        if (serr != ESP_OK)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_INTERNAL, 0, NULL, 0, true);
+            return serr;
+        }
+
+        det.dpidr = swd_ctx.dp_regs.dpidr;
+        det.targetid = swd_ctx.dp_regs.targetid;
+        det.dpidr_ok = (uint8_t)(swd_ctx.dp_regs.dpidr_ok ? 1 : 0);
+        det.targetid_ok = (uint8_t)(swd_ctx.dp_regs.targetid_ok ? 1 : 0);
+        det.detected_device = (uint8_t)(swd_ctx.detected_device ? 1 : 0);
+
+        return swd_queue_response(op, seq, SWD_UART_STATUS_OK, 0,
+                                  (const uint8_t *)&det, (uint16_t)sizeof(det), true);
+    }
+
+    case SWD_UART_OP_DEINIT:
+    {
+        if (!swd_session_active)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, false);
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        swd_stop_session();
+        return swd_queue_response(op, seq, SWD_UART_STATUS_OK, 0, NULL, 0, false);
+    }
+
+    case SWD_UART_OP_TRANSFER:
+    {
+        if (!swd_session_active)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
+            return ESP_ERR_INVALID_STATE;
+        }
+        if (arg_len < 8)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+            return ESP_ERR_INVALID_SIZE;
+        }
+
+        bool ap = args[0] ? true : false;
+        bool write = args[1] ? true : false;
+        uint8_t a23 = args[2] & 0x03;
+        uint32_t data = read_u32_le(&args[4]);
+
+        uint8_t ack = swd_uart_transfer(&swd_ctx, ap, write, a23, &data);
+        uint8_t out[4];
+        write_u32_le(out, data);
+
+        swd_uart_status_t st = SWD_UART_STATUS_OK;
+        if (ack == 8)
+        {
+            st = SWD_UART_STATUS_PARITY;
+        }
+
+        return swd_queue_response(op, seq, st, ack, out, 4, true);
+    }
+
+    case SWD_UART_OP_AP_READ:
+    case SWD_UART_OP_AP_READ_SINGLE:
+    {
+        if (!swd_session_active)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
+            return ESP_ERR_INVALID_STATE;
+        }
+        if (arg_len < 4)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+            return ESP_ERR_INVALID_SIZE;
+        }
+
+        uint8_t ap = args[0];
+        uint8_t ap_off = args[1];
+        uint32_t data = 0;
+        uint8_t ack = 0;
+        if (op == SWD_UART_OP_AP_READ_SINGLE)
+        {
+            ack = swd_uart_read_ap_single(&swd_ctx, ap, ap_off, &data);
+        }
+        else
+        {
+            ack = swd_uart_read_ap(&swd_ctx, ap, ap_off, &data);
+        }
+
+        uint8_t out[4];
+        write_u32_le(out, data);
+        return swd_queue_response(op, seq, SWD_UART_STATUS_OK, ack, out, 4, true);
+    }
+
+    case SWD_UART_OP_AP_WRITE:
+    {
+        if (!swd_session_active)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_NOT_INITIALIZED, 0, NULL, 0, true);
+            return ESP_ERR_INVALID_STATE;
+        }
+        if (arg_len < 8)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, true);
+            return ESP_ERR_INVALID_SIZE;
+        }
+
+        uint8_t ap = args[0];
+        uint8_t ap_off = args[1];
+        uint32_t data = read_u32_le(&args[4]);
+        uint8_t ack = swd_uart_write_ap(&swd_ctx, ap, ap_off, data);
+        return swd_queue_response(op, seq, SWD_UART_STATUS_OK, ack, NULL, 0, true);
+    }
+
+    default:
+        (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_OP, 0, NULL, 0, true);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+}
 
 /* bit set: clock, else data */
 static const uint32_t gpio_direction_mask[10] = {
@@ -681,144 +1030,143 @@ void swd_do_scan(AppFSM *ctx)
 {
     assert(ctx);
 
-    for (int num = 0; num < COUNT(gpio_direction_mask); num++)
+    int num = (int)(ctx->current_mask_id % COUNT(gpio_direction_mask));
+    ctx->current_mask_id = (uint8_t)num;
+
+    /* reset after timeout */
+    if (ctx->detected_timeout > 0)
     {
-        ctx->current_mask_id = num;
-
-        /* reset after timeout */
-        if (ctx->detected_timeout > 0)
-        {
-            ctx->detected_timeout--;
-        }
-        else
-        {
-            DBGS("Reset detected flag");
-            ctx->detected_device = false;
-            ctx->io_swd = ctx->io_selected;
-            ctx->io_swc = ctx->io_selected;
-            ctx->io_num_swd = 0xFF;
-            ctx->io_num_swc = 0xFF;
-            ctx->ap_scanned = 0;
-            memset(&ctx->dp_regs, 0x00, sizeof(ctx->dp_regs));
-            memset(&ctx->targetid_info, 0x00, sizeof(ctx->targetid_info));
-            memset(&ctx->apidr_info, 0x00, sizeof(ctx->apidr_info));
-        }
-
-        ctx->detected = false;
-        ctx->current_mask = gpio_direction_mask[ctx->current_mask_id];
-
-        /* when SWD was already detected, set it to data pin regardless of the mask */
-        if (ctx->detected_device)
-        {
-            ctx->current_mask &= ~ctx->io_swd;
-        }
-
-        /* do the scan */
-        xSemaphoreTake(ctx->swd_mutex, portMAX_DELAY);
-        swd_scan(ctx);
-        xSemaphoreGive(ctx->swd_mutex);
-
-        /* now when detected a device, set the timeout */
-        if (ctx->detected)
-        {
-            DBGS("Set detected flag");
-            ctx->detected_device = true;
-            ctx->detected_timeout = TIMER_HZ * TIMEOUT;
-
-            /* update DPIDR fields */
-            ctx->dpidr_info.revision = (ctx->dp_regs.dpidr >> 28) & 0x0F;
-            ctx->dpidr_info.partno = (ctx->dp_regs.dpidr >> 20) & 0xFF;
-            ctx->dpidr_info.version = (ctx->dp_regs.dpidr >> 12) & 0x0F;
-            ctx->dpidr_info.designer = (ctx->dp_regs.dpidr >> 1) & 0x3FF;
-
-            if (!has_multiple_bits(ctx->io_swc))
-            {
-                DBGS(" - Detected pins");
-                DBGS(" - Resetting error");
-
-                xSemaphoreTake(ctx->swd_mutex, portMAX_DELAY);
-                /* reset error */
-                /* first make sure we have the correct bank by invalidating the current select cache */
-                ctx->dp_regs.select_ok = false;
-                uint8_t ack =
-                    swd_read_dpbank(ctx, REG_CTRLSTAT, REG_CTRLSTAT_BANK, &ctx->dp_regs.ctrlstat);
-
-                if (ack != 1 || (ctx->dp_regs.ctrlstat & STAT_ERROR_FLAGS))
-                {
-                    DBGS(" - send ABORT");
-                    swd_abort(ctx);
-                }
-                DBGS(" - Fetch CTRL/STAT");
-                ctx->dp_regs.ctrlstat_ok =
-                    swd_read_dpbank(
-                        ctx, REG_CTRLSTAT, REG_CTRLSTAT_BANK, &ctx->dp_regs.ctrlstat) == 1;
-                DBG("     %08lX %s",
-                    ctx->dp_regs.ctrlstat,
-                    ctx->dp_regs.ctrlstat_ok ? "OK" : "FAIL");
-
-                if (ctx->dpidr_info.version >= 1)
-                {
-                    DBGS(" - DAPv1, read DLCR");
-                    ctx->dp_regs.dlcr_ok =
-                        swd_read_dpbank(ctx, REG_DLCR, REG_DLCR_BANK, &ctx->dp_regs.dlcr) == 1;
-                    DBG("     %08lX %s", ctx->dp_regs.dlcr, ctx->dp_regs.dlcr_ok ? "OK" : "FAIL");
-                }
-
-                if (ctx->dpidr_info.version >= 2)
-                {
-                    DBGS(" - DAPv2, read TARGETID");
-                    ctx->dp_regs.targetid_ok =
-                        swd_read_dpbank(
-                            ctx, REG_TARGETID, REG_TARGETID_BANK, &ctx->dp_regs.targetid) == 1;
-                    DBG("     %08lX %s",
-                        ctx->dp_regs.targetid,
-                        ctx->dp_regs.targetid_ok ? "OK" : "FAIL");
-                    DBGS(" - DAPv2, read EVENTSTAT");
-                    ctx->dp_regs.eventstat_ok =
-                        swd_read_dpbank(
-                            ctx, REG_EVENTSTAT, REG_EVENTSTAT_BANK, &ctx->dp_regs.eventstat) == 1;
-                    DBG("     %08lX %s",
-                        ctx->dp_regs.eventstat,
-                        ctx->dp_regs.eventstat_ok ? "OK" : "FAIL");
-                    DBGS(" - DAPv2, read DLPIDR");
-                    ctx->dp_regs.dlpidr_ok =
-                        swd_read_dpbank(ctx, REG_DLPIDR, REG_DLPIDR_BANK, &ctx->dp_regs.dlpidr) ==
-                        1;
-                    DBG("     %08lX %s",
-                        ctx->dp_regs.dlpidr,
-                        ctx->dp_regs.dlpidr_ok ? "OK" : "FAIL");
-                }
-
-                if (ctx->dp_regs.targetid_ok)
-                {
-                    ctx->targetid_info.revision = (ctx->dp_regs.targetid >> 28) & 0x0F;
-                    ctx->targetid_info.partno = (ctx->dp_regs.targetid >> 12) & 0xFFFF;
-                    ctx->targetid_info.designer = (ctx->dp_regs.targetid >> 1) & 0x3FF;
-                }
-
-                xSemaphoreGive(ctx->swd_mutex);
-            }
-
-            /* Only finish once SWCLK is uniquely determined.
-             * Otherwise keep scanning with additional direction masks until
-             * ctx->io_swc collapses to a single bit (and ctx->io_num_* get set).
-             */
-            if (!has_multiple_bits(ctx->io_swc) &&
-                ctx->io_num_swd != 0xFF &&
-                ctx->io_num_swc != 0xFF)
-            {
-                return;
-            }
-        }
-        else
-        {
-            if (!has_multiple_bits(ctx->io_swc))
-            {
-                DBGS(" - Lost device");
-            }
-        }
-        DBGS("next mask");
+        ctx->detected_timeout--;
     }
+    else
+    {
+        DBGS("Reset detected flag");
+        ctx->detected_device = false;
+        ctx->io_swd = ctx->io_selected;
+        ctx->io_swc = ctx->io_selected;
+        ctx->io_num_swd = 0xFF;
+        ctx->io_num_swc = 0xFF;
+        ctx->ap_scanned = 0;
+        memset(&ctx->dp_regs, 0x00, sizeof(ctx->dp_regs));
+        memset(&ctx->targetid_info, 0x00, sizeof(ctx->targetid_info));
+        memset(&ctx->apidr_info, 0x00, sizeof(ctx->apidr_info));
+    }
+
+    ctx->detected = false;
+    ctx->current_mask = gpio_direction_mask[ctx->current_mask_id];
+
+    /* when SWD was already detected, set it to data pin regardless of the mask */
+    if (ctx->detected_device)
+    {
+        ctx->current_mask &= ~ctx->io_swd;
+    }
+
+    /* do one scan step */
+    xSemaphoreTake(ctx->swd_mutex, portMAX_DELAY);
+    swd_scan(ctx);
+    xSemaphoreGive(ctx->swd_mutex);
+
+    /* now when detected a device, set the timeout */
+    if (ctx->detected)
+    {
+        DBGS("Set detected flag");
+        ctx->detected_device = true;
+        ctx->detected_timeout = TIMER_HZ * TIMEOUT;
+
+        /* update DPIDR fields */
+        ctx->dpidr_info.revision = (ctx->dp_regs.dpidr >> 28) & 0x0F;
+        ctx->dpidr_info.partno = (ctx->dp_regs.dpidr >> 20) & 0xFF;
+        ctx->dpidr_info.version = (ctx->dp_regs.dpidr >> 12) & 0x0F;
+        ctx->dpidr_info.designer = (ctx->dp_regs.dpidr >> 1) & 0x3FF;
+
+        if (!has_multiple_bits(ctx->io_swc))
+        {
+            DBGS(" - Detected pins");
+            DBGS(" - Resetting error");
+
+            xSemaphoreTake(ctx->swd_mutex, portMAX_DELAY);
+            /* reset error */
+            /* first make sure we have the correct bank by invalidating the current select cache */
+            ctx->dp_regs.select_ok = false;
+            uint8_t ack =
+                swd_read_dpbank(ctx, REG_CTRLSTAT, REG_CTRLSTAT_BANK, &ctx->dp_regs.ctrlstat);
+
+            if (ack != 1 || (ctx->dp_regs.ctrlstat & STAT_ERROR_FLAGS))
+            {
+                DBGS(" - send ABORT");
+                swd_abort(ctx);
+            }
+            DBGS(" - Fetch CTRL/STAT");
+            ctx->dp_regs.ctrlstat_ok =
+                swd_read_dpbank(
+                    ctx, REG_CTRLSTAT, REG_CTRLSTAT_BANK, &ctx->dp_regs.ctrlstat) == 1;
+            DBG("     %08lX %s",
+                ctx->dp_regs.ctrlstat,
+                ctx->dp_regs.ctrlstat_ok ? "OK" : "FAIL");
+
+            if (ctx->dpidr_info.version >= 1)
+            {
+                DBGS(" - DAPv1, read DLCR");
+                ctx->dp_regs.dlcr_ok =
+                    swd_read_dpbank(ctx, REG_DLCR, REG_DLCR_BANK, &ctx->dp_regs.dlcr) == 1;
+                DBG("     %08lX %s", ctx->dp_regs.dlcr, ctx->dp_regs.dlcr_ok ? "OK" : "FAIL");
+            }
+
+            if (ctx->dpidr_info.version >= 2)
+            {
+                DBGS(" - DAPv2, read TARGETID");
+                ctx->dp_regs.targetid_ok =
+                    swd_read_dpbank(
+                        ctx, REG_TARGETID, REG_TARGETID_BANK, &ctx->dp_regs.targetid) == 1;
+                DBG("     %08lX %s",
+                    ctx->dp_regs.targetid,
+                    ctx->dp_regs.targetid_ok ? "OK" : "FAIL");
+                DBGS(" - DAPv2, read EVENTSTAT");
+                ctx->dp_regs.eventstat_ok =
+                    swd_read_dpbank(
+                        ctx, REG_EVENTSTAT, REG_EVENTSTAT_BANK, &ctx->dp_regs.eventstat) == 1;
+                DBG("     %08lX %s",
+                    ctx->dp_regs.eventstat,
+                    ctx->dp_regs.eventstat_ok ? "OK" : "FAIL");
+                DBGS(" - DAPv2, read DLPIDR");
+                ctx->dp_regs.dlpidr_ok =
+                    swd_read_dpbank(ctx, REG_DLPIDR, REG_DLPIDR_BANK, &ctx->dp_regs.dlpidr) ==
+                    1;
+                DBG("     %08lX %s",
+                    ctx->dp_regs.dlpidr,
+                    ctx->dp_regs.dlpidr_ok ? "OK" : "FAIL");
+            }
+
+            if (ctx->dp_regs.targetid_ok)
+            {
+                ctx->targetid_info.revision = (ctx->dp_regs.targetid >> 28) & 0x0F;
+                ctx->targetid_info.partno = (ctx->dp_regs.targetid >> 12) & 0xFFFF;
+                ctx->targetid_info.designer = (ctx->dp_regs.targetid >> 1) & 0x3FF;
+            }
+
+            xSemaphoreGive(ctx->swd_mutex);
+        }
+
+        /* Only finish once SWCLK is uniquely determined.
+         * Otherwise continue with additional direction masks on future detect calls.
+         */
+        if (!has_multiple_bits(ctx->io_swc) &&
+            ctx->io_num_swd != 0xFF &&
+            ctx->io_num_swc != 0xFF)
+        {
+            return;
+        }
+    }
+    else
+    {
+        if (!has_multiple_bits(ctx->io_swc))
+        {
+            DBGS(" - Lost device");
+        }
+    }
+
+    ctx->current_mask_id = (uint8_t)((ctx->current_mask_id + 1) % COUNT(gpio_direction_mask));
+    DBGS("next mask");
 }
 
 

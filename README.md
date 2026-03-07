@@ -10,12 +10,14 @@ This project turns an ESP32-C3 into a combined USB-CDC ↔ UART gateway and web-
 - Web flasher: flashes bundled images (bootloader, partition table, app) directly from the browser using Web Serial.
 - WebSerial config UI: query and set UART gateway config (baud + pins).
 - UART gateway firmware supports multiple operating modes (simple bridge, extended packet mode, SWD tunneling).
+- CAN receive mode via native ESP32-C3 TWAI hardware with configurable RX/TX GPIO.
 - Built-in images: defaults embed build outputs (bootloader.bin, partition-table.bin, ESP32C3_UART.bin).
 
 ## Web tools included
 - `flasher.html`: flash and configure the ESP32-C3 (via ROM bootloader protocol) using the embedded binaries.
 - `swd.html`: SWD debug console over the UART gateway (memory view/editor + basic core debug UI).
 - `cc3200.html`: CC3200 console UI (Experimental interface for accessing CC3200 via UART).
+- `multiprotocol.html`: SWD/UART/CAN monitor UI.
 
 Static/self-contained variants (handy for offline use/hosting without external JS):
 - `flasher.static.html`
@@ -38,6 +40,11 @@ The firmware has three modes on the USB-CDC port:
 3) **SWD mode (tunneled over extended mode)**
 - SWD commands/responses are carried inside extended-mode packets of type `SWD`.
 - This is what `swd.html` uses.
+
+4) **CAN mode (tunneled over extended mode)**
+- CAN control and RX frames are carried in extended-mode packets of type `CAN`.
+- This is what `multiprotocol.html` uses.
+- Uses ESP32-C3 TWAI hardware directly (not UART bit-banging).
 
 ## Building
 1. Build firmware (generates `build/bootloader/bootloader.bin`, `build/partition_table/partition-table.bin`, `build/ESP32C3_UART.bin`).
@@ -67,6 +74,7 @@ The firmware has three modes on the USB-CDC port:
 - 4-byte header: `uint16_t length` + `uint16_t type`, little-endian.
 - `length` includes header + payload (minimum 4).
 - Types: 0x00=DATA, 0x01=CONFIG, 0x02=CONTROL, 0x03=LOG, 0x04=SWD, 0x0A=EXTMODE.
+- Types: 0x00=DATA, 0x01=CONFIG, 0x02=CONTROL, 0x03=LOG, 0x04=SWD, 0x05=CAN, 0x0A=EXTMODE.
 
 **Send/receive serial data**
 - Host → device: wrap raw UART bytes in a DATA packet (type 0x00).

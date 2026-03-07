@@ -12,12 +12,12 @@
 #define UART_DEFAULT_RX_GPIO 21
 #define UART_DEFAULT_RESET_GPIO 0xFF
 #define UART_DEFAULT_CONTROL_GPIO 0xFF
+#define CAN_DEFAULT_BAUD 500000
 
 /* Stream buffer sizes - 32 KiB each direction */
 #define STREAM_BUFFER_SIZE (32 * 1024)
 
 /* Extended mode activation magic: a valid packet with type 0x000A and 8-byte payload */
-#define UART_EXTMODE_MAGIC_PAYLOAD "UARTGWEX"
 #define UART_EXTMODE_MAGIC_SIZE 12 /* 4 bytes header + 8 bytes payload */
 
 /* Configuration packet structure - packed for binary compatibility */
@@ -44,6 +44,7 @@ typedef enum
     UART_PACKET_TYPE_CONTROL = 0x02, /* Control commands (B:1234, R:0) */
     UART_PACKET_TYPE_LOG = 0x03,     /* Log messages from ESP32 */
     UART_PACKET_TYPE_SWD = 0x04,     /* SWD commands */
+    UART_PACKET_TYPE_CAN = 0x05,     /* CAN commands + RX frames */
     UART_PACKET_TYPE_EXTMODE = 0x0A  /* Extended mode activation packet */
 } uart_packet_type_t;
 
@@ -152,6 +153,86 @@ typedef struct __attribute__((packed))
     uint8_t detected_device;
     uint8_t reserved;
 } swd_uart_detect_rsp_t;
+
+/* ===== CAN UART sub-protocol (inside UART_PACKET_TYPE_CAN payload) =====
+ *
+ * Payload begins with can_uart_req_hdr_t (magic + op + flags + seq).
+ * Firmware replies with binary response packets with op|0x80.
+ */
+
+#define CAN_UART_MAGIC 0xBEEFu
+
+typedef enum
+{
+    CAN_UART_OP_START = 0x01,
+    CAN_UART_OP_STOP = 0x02,
+    CAN_UART_OP_RX_FRAME = 0x10,
+} can_uart_op_t;
+
+typedef enum
+{
+    CAN_UART_STATUS_OK = 0x00,
+    CAN_UART_STATUS_BAD_LEN = 0x01,
+    CAN_UART_STATUS_BAD_OP = 0x02,
+    CAN_UART_STATUS_INVALID_ARG = 0x03,
+    CAN_UART_STATUS_NOT_INITIALIZED = 0x04,
+    CAN_UART_STATUS_INTERNAL = 0x7F,
+} can_uart_status_t;
+
+typedef enum
+{
+    CAN_UART_FRAME_FLAG_EXTD = 0x01,
+    CAN_UART_FRAME_FLAG_RTR = 0x02,
+    CAN_UART_FRAME_FLAG_SS = 0x04,
+    CAN_UART_FRAME_FLAG_SELF = 0x08,
+    CAN_UART_FRAME_FLAG_DLC_NON_COMP = 0x10,
+} can_uart_frame_flags_t;
+
+typedef enum
+{
+    CAN_UART_EVENT_FLAG_RX_QUEUE_FULL = 0x0001,
+    CAN_UART_EVENT_FLAG_RX_FIFO_OVERRUN = 0x0002,
+    CAN_UART_EVENT_FLAG_ABOVE_ERR_WARN = 0x0004,
+    CAN_UART_EVENT_FLAG_BELOW_ERR_WARN = 0x0008,
+    CAN_UART_EVENT_FLAG_ERR_PASS = 0x0010,
+    CAN_UART_EVENT_FLAG_ARB_LOST = 0x0020,
+    CAN_UART_EVENT_FLAG_BUS_ERROR = 0x0040,
+    CAN_UART_EVENT_FLAG_BUS_OFF = 0x0080,
+    CAN_UART_EVENT_FLAG_BUS_RECOVERED = 0x0100,
+} can_uart_event_flags_t;
+
+typedef struct __attribute__((packed))
+{
+    uint16_t magic; /* CAN_UART_MAGIC */
+    uint8_t op;
+    uint8_t flags;
+    uint16_t seq;
+    uint16_t reserved;
+} can_uart_req_hdr_t;
+
+typedef struct __attribute__((packed))
+{
+    uint16_t magic; /* CAN_UART_MAGIC */
+    uint8_t op;     /* request op | 0x80 */
+    uint8_t status; /* can_uart_status_t */
+    uint16_t seq;
+    uint8_t can_rx_gpio;
+    uint8_t can_tx_gpio;
+    uint16_t reserved;
+    uint16_t data_len;
+} can_uart_rsp_hdr_t;
+
+typedef struct __attribute__((packed))
+{
+    uint32_t id;
+    uint8_t dlc;
+    uint8_t flags; /* can_uart_frame_flags_t */
+    uint16_t event_flags; /* can_uart_event_flags_t */
+    uint64_t timestamp_us; /* ESP timer timestamp in microseconds */
+    uint32_t rx_missed_count;
+    uint32_t rx_overrun_count;
+    uint8_t data[8];
+} can_uart_frame_t;
 
 /* Callback function type for configuration change notifications */
 typedef void (*uart_config_callback_t)(const uartgw_config_t *config);

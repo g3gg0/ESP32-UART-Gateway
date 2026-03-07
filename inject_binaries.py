@@ -12,7 +12,8 @@ TADAA_MP3 = PROJECT_ROOT / "tadaa.mp3"
 PATCH_FILES = [
     PROJECT_ROOT / "flasher.html",
     PROJECT_ROOT / "cc3200.html",
-    PROJECT_ROOT / "swd.html"
+    PROJECT_ROOT / "swd.html",
+    PROJECT_ROOT / "multiprotocol.html"
 ]
 
 # Token markers for embedding
