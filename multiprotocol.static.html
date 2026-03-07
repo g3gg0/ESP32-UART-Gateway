@@ -1758,12 +1758,12 @@ window.EspSerial = EspSerial;
                 <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
                     <div class="proto-grid">
                         <div>
-                            <label for="canRx">CAN RX GPIO</label>
-                            <input id="canRx" value="21" />
+                            <label for="canRx">RX GPIO</label>
+                            <select id="canRx"></select>
                         </div>
                         <div>
-                            <label for="canTx">CAN TX GPIO</label>
-                            <input id="canTx" value="20" />
+                            <label for="canTx">TX GPIO</label>
+                            <select id="canTx"></select>
                         </div>
                         <div>
                             <label for="canBaud">Baud (kbit/s)</label>
@@ -1804,15 +1804,15 @@ window.EspSerial = EspSerial;
                 <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
                     <div class="proto-grid">
                         <div>
-                            <label for="uartCfgTx">TX GPIO</label>
-                            <select id="uartCfgTx"></select>
-                        </div>
-                        <div>
                             <label for="uartCfgRx">RX GPIO</label>
                             <select id="uartCfgRx"></select>
                         </div>
                         <div>
-                            <label for="uartCfgBaud">Baud Rate</label>
+                            <label for="uartCfgTx">TX GPIO</label>
+                            <select id="uartCfgTx"></select>
+                        </div>
+                        <div>
+                            <label for="uartCfgBaud">Baud (kbit/s)</label>
                             <select id="uartCfgBaud">
                                 <option value="300">300</option>
                                 <option value="600">600</option>
@@ -2327,23 +2327,18 @@ window.EspSerial = EspSerial;
             const target = String(tabName || '').toLowerCase();
             if (!['swd', 'can', 'uart'].includes(target)) return;
 
-            if (activeProtocolTab !== target && activeProtocolTab === 'swd') {
+            if (activeProtocolTab !== target && espSerial && isDeviceConnected) {
                 try {
-                    await stopSwdOperations('Switching away from SWD');
+                    if (activeProtocolTab === 'swd') {
+                        await stopSwd('Switching away from SWD', true);
+                    } else if (activeProtocolTab === 'can') {
+                        await stopCan(true);
+                    } else if (activeProtocolTab === 'uart') {
+                        await stopUart(true);
+                    }
                 } catch (e) {
                     /* ignore */
                 }
-            }
-
-            if (activeProtocolTab !== target && espSerial && isDeviceConnected) {
-                try {
-                    await espSerial.setGatewayMode('NONE');
-                } catch (e) {
-                    logToConsole(`Mode NONE failed: ${e.message}`, 'error');
-                }
-                canRunning = false;
-                uartRunning = false;
-                setCanUiState();
             }
 
             activeProtocolTab = target;
@@ -2397,6 +2392,17 @@ window.EspSerial = EspSerial;
             }
         }
 
+        async function stopSwd(reason = '', silent = false) {
+            await stopSwdOperations(reason);
+            if (espSerial && isDeviceConnected) {
+                try {
+                    await espSerial.setGatewayMode('NONE');
+                } catch (e) {
+                    if (!silent) logToConsole(`SWD stop failed: ${e.message}`, 'error');
+                }
+            }
+        }
+
         function appendUartRxLine(text) {
             const line = String(text || '');
             uartRxLineBuffer.push(line);
@@ -2425,6 +2431,8 @@ window.EspSerial = EspSerial;
         function buildUartGpioSelects() {
             const gpios = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 19, 20, 21];
             const targets = [
+                { id: 'canRx', includeUnused: false, defaultValue: 21 },
+                { id: 'canTx', includeUnused: false, defaultValue: 20 },
                 { id: 'uartCfgTx', includeUnused: false, defaultValue: 20 },
                 { id: 'uartCfgRx', includeUnused: false, defaultValue: 21 },
                 { id: 'uartCfgReset', includeUnused: true, defaultValue: 255 },
@@ -2532,14 +2540,7 @@ window.EspSerial = EspSerial;
             if (!espSerial || !isDeviceConnected) return;
 
             if (uartRunning) {
-                try {
-                    await espSerial.setGatewayMode('NONE');
-                    uartRunning = false;
-                    setCanUiState();
-                    logToConsole('UART stopped', 'info');
-                } catch (e) {
-                    logToConsole(`UART stop failed: ${e.message}`, 'error');
-                }
+                await stopUart();
                 return;
             }
 
@@ -2800,14 +2801,6 @@ window.EspSerial = EspSerial;
         async function startCan() {
             if (!espSerial || !isDeviceConnected) return;
 
-            if (detectLoopActive || (activeProtocolTab === 'swd' && swd)) {
-                try {
-                    await stopSwdOperations('Starting CAN');
-                } catch (e) {
-                    /* ignore */
-                }
-            }
-
             if (canRunning) {
                 await stopCan();
                 return;
@@ -2855,18 +2848,52 @@ window.EspSerial = EspSerial;
         }
 
         async function stopCan(silent = false) {
-            if (!espSerial || !isDeviceConnected) return;
+            if (!espSerial || !isDeviceConnected) {
+                canRunning = false;
+                setCanUiState();
+                return;
+            }
+            if (!canRunning) {
+                setCanUiState();
+                return;
+            }
             try {
                 const rsp = await espSerial.canRequest(CAN_UART_OP_STOP, new Uint8Array(0), { timeoutMs: 1500 });
                 if (!rsp || rsp.status !== CAN_UART_STATUS_OK) {
                     if (!silent) logToConsole(`CAN stop failed (status=${rsp ? rsp.status : 'n/a'})`, 'error');
                     return;
                 }
+                try {
+                    await espSerial.setGatewayMode('NONE');
+                } catch (e) {
+                    if (!silent) logToConsole(`CAN mode NONE failed: ${e.message}`, 'error');
+                }
                 canRunning = false;
                 setCanUiState();
                 if (!silent) logToConsole('CAN stopped', 'info');
             } catch (e) {
                 if (!silent) logToConsole(`CAN stop error: ${e.message}`, 'error');
+            }
+        }
+
+        async function stopUart(silent = false) {
+            if (!espSerial || !isDeviceConnected) {
+                uartRunning = false;
+                setCanUiState();
+                return;
+            }
+            if (!uartRunning) {
+                setCanUiState();
+                return;
+            }
+
+            try {
+                await espSerial.setGatewayMode('NONE');
+                uartRunning = false;
+                setCanUiState();
+                if (!silent) logToConsole('UART stopped', 'info');
+            } catch (e) {
+                if (!silent) logToConsole(`UART stop failed: ${e.message}`, 'error');
             }
         }
 
