@@ -12,9 +12,10 @@
 #include "freertos/queue.h"
 #include "uart_gateway.h"
 #include "led.h"
+#include "logger.h"
+#include "config_manager.h"
+#include "wifi_manager.h"
 
-
-#define TAG "ESP32-UART"
 
 static void initialize_nvs(void)
 {
@@ -29,34 +30,29 @@ static void initialize_nvs(void)
 
 void app_main()
 {
-    uartgw_config_t saved_config = {
-        .baud_rate = UART_DEFAULT_BAUD,
-        .tx_gpio = UART_DEFAULT_TX_GPIO,
-        .rx_gpio = UART_DEFAULT_RX_GPIO,
-        .reset_gpio = UART_DEFAULT_RESET_GPIO,
-        .control_gpio = UART_DEFAULT_CONTROL_GPIO,
-        .led_gpio = UART_DEFAULT_LED_GPIO,
-        .extended_mode = 0,
-    };
-
-    ESP_LOGI(TAG, "Starting UART Gateway");
+    uartgw_config_t saved_config;
 
     /* Initialize NVS */
     initialize_nvs();
 
+    /* Load all data-driven configuration fields */
+    config_manager_init();
+
+    const device_config_t *cfg = config_manager_get();
+    saved_config.baud_rate = cfg->uart_baud_rate;
+    saved_config.tx_gpio = cfg->uart_tx_gpio;
+    saved_config.rx_gpio = cfg->uart_rx_gpio;
+    saved_config.reset_gpio = cfg->uart_reset_gpio;
+    saved_config.control_gpio = cfg->uart_control_gpio;
+    saved_config.led_gpio = cfg->uart_led_gpio;
+    saved_config.extended_mode = 0;
+
     /* Start gateway tasks and USB CDC inside uart_gateway */
     uart_gateway_start();
 
-    /* Try to load saved configuration from NVS */
-    esp_err_t load_result = uart_gateway_load_config(&saved_config);
-    if (load_result == ESP_OK)
-    {
-        ESP_LOGI(TAG, "Loaded persisted UART configuration from NVS");
-    }
-    else if (load_result != ESP_ERR_NVS_NOT_FOUND)
-    {
-        ESP_LOGW(TAG, "Failed to load configuration from NVS: %s", esp_err_to_name(load_result));
-    }
+    /* Mount FAT filesystem and open first log file for this boot */
+    logger_init();
+    logger_start();
 
     /* Initialize UART gateway (creates stream buffers) */
     uart_gateway_init(&saved_config);
@@ -64,10 +60,11 @@ void app_main()
     /* Initialize LED on configured GPIO */
     led_init(&saved_config);
 
+    /* Start WiFi STA/AP and TCP protocol bridge */
+    wifi_manager_start();
+
     /* Give USB CDC time to stabilize before tasks start processing */
-    ESP_LOGI(TAG, "Waiting for USB CDC to stabilize...");
     vTaskDelay(100 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "System ready, entering main loop");
 
     /* Keep logs at ERROR level to avoid corrupting traffic */
     esp_log_level_set("*", ESP_LOG_NONE);

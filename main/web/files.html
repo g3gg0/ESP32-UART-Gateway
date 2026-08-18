@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Log Files</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:'JetBrains Mono','Cascadia Code','Consolas','Courier New',monospace;
+      background:#0c1118;
+      min-height:100vh;
+      padding:24px;
+      display:flex;
+      justify-content:center;
+      align-items:flex-start;
+      color:#d1d5db
+    }
+    .container{
+      max-width:1000px;
+      width:100%;
+      background:#121923;
+      border-radius:10px;
+      border:1px solid #263241;
+      box-shadow:0 12px 36px rgba(0,0,0,.38);
+      overflow:hidden
+    }
+    .header{background:#111923;padding:20px;border-bottom:1px solid #2c3a4b}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    h2{font-size:20px;color:#e5e7eb}
+    .content{padding:20px}
+    a{color:#dbe4ef;text-decoration:none}
+    a:hover{text-decoration:underline}
+    table{width:100%;border-collapse:collapse;background:#0f1620;border:1px solid #2a3646;border-radius:6px;overflow:hidden}
+    th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #202b3a}
+    th{background:#131d29;color:#a9bbcf}
+    td{color:#d9e3ef}
+    tr:hover td{background:#18212d}
+    .del{color:#f87171}
+    .footer{padding:10px 20px;border-top:1px solid #2a3646;font-size:12px;color:#9aa8b7;text-align:center;background:#101720}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="top">
+        <h2>Log Files</h2>
+        <a href="/">← Configuration</a>
+      </div>
+    </div>
+    <div class="content">
+      <table>
+        <tr><th>Filename</th><th>Size</th><th>Actions</th></tr>
+        {{FILE_ROWS}}
+      </table>
+    </div>
+    <div class="footer">Logger storage browser</div>
+  </div>
+</body>
+</html>

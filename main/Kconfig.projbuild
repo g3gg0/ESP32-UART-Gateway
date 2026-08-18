@@ -1,0 +1,230 @@
+menu "UART Logger"
+
+    config LOGGER_ENABLED
+        bool "Enable UART data logger to flash filesystem"
+        default n
+        help
+            When enabled, all bytes received on the UART RX pin are mirrored
+            into sequentially-numbered binary log files on a FAT filesystem
+            stored in a dedicated flash partition. The filesystem is formatted
+            automatically on first use. All logger functionality is independent
+            of the existing CDC/USB data path.
+
+    if LOGGER_ENABLED
+
+        config LOGGER_PARTITION_LABEL
+            string "Storage partition label"
+            default "storage"
+            help
+                Label of the FAT data partition as listed in the Name column
+                of partitions.csv.
+
+        config LOGGER_FILENAME_PREFIX
+            string "Log filename prefix"
+            default "log_"
+            help
+                Prefix prepended to each auto-numbered log filename.
+                Files are named <prefix><6-digit-counter>.bin,
+                e.g. log_000001.bin, log_000002.bin, ...
+
+        config LOGGER_QUEUE_DEPTH
+            int "Logger queue depth (number of pending items)"
+            range 4 128
+            default 32
+            help
+                Maximum number of data chunks that can be waiting in the logger
+                queue. Each item is a separately heap-allocated copy of received
+                UART bytes. Increase this value if UART data arrives in bursts.
+
+        config LOGGER_FLUSH_INTERVAL_MS
+            int "Filesystem flush interval (milliseconds)"
+            range 100 10000
+            default 500
+            help
+                How often fflush and fsync are called on the open log file.
+                Lower values reduce data loss on unexpected power failure but
+                increase flash wear.
+
+        config LOGGER_MAX_FILE_SIZE_KB
+            int "Maximum log file size in KB (0 = one file per boot, ignored by ROTATE policy)"
+            range 0 8192
+            default 0
+            help
+                When set to a non-zero value the logger closes the current file
+                and opens the next sequentially-numbered file once this many
+                kilobytes have been written. When set to 0 a single new file is
+                opened on every boot and is used for the entire session.
+                Not used when the ROTATE low-space policy is active (that policy
+                uses LOGGER_SPACE_THRESHOLD_KB for file rotation instead).
+
+        choice LOGGER_LOW_SPACE_POLICY
+            prompt "Low storage space policy"
+            default LOGGER_POLICY_STOP
+            help
+                Action taken when the storage partition free space drops below
+                the configured threshold (LOGGER_SPACE_THRESHOLD_KB).
+
+            config LOGGER_POLICY_STOP
+                bool "Stop logging"
+                help
+                    Close the log file and stop accepting new data once free
+                    space is below the threshold.
+
+            config LOGGER_POLICY_ROTATE
+                bool "Rotate (ringbuffer)"
+                help
+                    Delete the oldest log file to reclaim space when free space
+                    drops below the threshold.  Also rotates to a new file once
+                    the current file exceeds the threshold size.  Together these
+                    create a ring-buffer of fixed-size log files.
+
+            config LOGGER_POLICY_ERASE
+                bool "Erase all log files"
+                help
+                    Delete every log file and restart logging from file 000001
+                    when free space drops below the threshold.
+
+        endchoice
+
+        config LOGGER_SPACE_THRESHOLD_KB
+            int "Space threshold in KB (used by all policies)"
+            range 10 8192
+            default 100
+            help
+                STOP:   stop logging when free space drops below this value.
+                ROTATE: delete the oldest log file when free space drops below
+                        this value; also rotate to a new file when the current
+                        file grows beyond this size (ringbuffer effect).
+                ERASE:  erase all log files when free space drops below this value.
+
+    endif
+
+endmenu
+
+menu "Protocol Defaults"
+
+    config GW_UART_DEFAULT_BAUD
+        int "Default UART baud rate"
+        range 300 1000000
+        default 115200
+
+    config GW_UART_DEFAULT_TX_GPIO
+        int "Default UART TX GPIO"
+        range 0 43
+        default 20
+
+    config GW_UART_DEFAULT_RX_GPIO
+        int "Default UART RX GPIO"
+        range 0 43
+        default 21
+
+    config GW_UART_DEFAULT_RESET_GPIO
+        int "Default reset GPIO (255 = disabled)"
+        range 0 255
+        default 255
+
+    config GW_UART_DEFAULT_CONTROL_GPIO
+        int "Default control GPIO (255 = disabled)"
+        range 0 255
+        default 255
+
+    config GW_UART_DEFAULT_LED_GPIO
+        int "Default LED GPIO (255 = disabled)"
+        range 0 255
+        default 8
+
+    config GW_CAN_DEFAULT_BAUD
+        int "Default CAN baud rate"
+        range 25000 1000000
+        default 500000
+
+    config GW_SWD_DEFAULT_CLOCK_DELAY
+        int "Default SWD clock delay (us)"
+        range 0 1000
+        default 0
+
+    config GW_SWD_DEFAULT_IDLE_BITS
+        int "Default SWD idle bits"
+        range 1 64
+        default 8
+
+endmenu
+
+menu "WiFi Gateway"
+
+    config GW_WIFI_ENABLED
+        bool "Enable WiFi support"
+        default y
+
+    if GW_WIFI_ENABLED
+
+        config GW_DEVICE_NAME
+            string "Default device name (DHCP/mDNS host name)"
+            default "esp32c3-gw"
+
+        config GW_WIFI_AP_SSID
+            string "Fallback AP SSID"
+            default "ESP32C3-GW"
+
+        config GW_WIFI_AP_PASSWORD
+            string "Fallback AP password (empty = open)"
+            default ""
+
+        config GW_WIFI_AP_CHANNEL
+            int "Fallback AP channel"
+            range 1 13
+            default 1
+
+        config GW_WIFI_AP_MAX_CONN
+            int "Fallback AP max clients"
+            range 1 8
+            default 4
+
+        config GW_WIFI_STA_TIMEOUT_S
+            int "WiFi STA connect timeout (seconds)"
+            range 3 60
+            default 12
+
+        config GW_HTTP_SERVER_ENABLED
+            bool "Enable HTTP configuration and file-browser web interface"
+            default y
+
+        if GW_HTTP_SERVER_ENABLED
+
+            config GW_HTTP_SERVER_PORT
+                int "HTTP server port"
+                range 1 65535
+                default 80
+
+        endif
+
+    endif
+
+endmenu
+
+menu "TCP Protocol Server"
+
+    config GW_TCP_SERVER_ENABLED
+        bool "Expose protocol over TCP"
+        default y
+        depends on GW_WIFI_ENABLED
+
+    if GW_TCP_SERVER_ENABLED
+
+        config GW_TCP_SERVER_PORT
+            int "TCP server port"
+            range 1 65535
+            default 23
+
+        config GW_TCP_MAX_CLIENTS
+            int "Maximum TCP clients"
+            range 1 4
+            default 2
+
+        config GW_TCP_ALWAYS_EXTENDED_MODE
+            bool "TCP starts directly in extended mode"
+            default n
+
+    endif
+
+endmenu

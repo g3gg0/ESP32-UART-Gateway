@@ -3,16 +3,45 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "driver/uart.h"
+#include "sdkconfig.h"
 
 /* UART Gateway default configuration */
-#define UART_DEFAULT_BAUD 115200
+#ifndef CONFIG_GW_UART_DEFAULT_BAUD
+#define CONFIG_GW_UART_DEFAULT_BAUD 115200
+#endif
 
-#define UART_DEFAULT_LED_GPIO 8
-#define UART_DEFAULT_TX_GPIO 20
-#define UART_DEFAULT_RX_GPIO 21
-#define UART_DEFAULT_RESET_GPIO 0xFF
-#define UART_DEFAULT_CONTROL_GPIO 0xFF
-#define CAN_DEFAULT_BAUD 500000
+#ifndef CONFIG_GW_UART_DEFAULT_LED_GPIO
+#define CONFIG_GW_UART_DEFAULT_LED_GPIO 8
+#endif
+
+#ifndef CONFIG_GW_UART_DEFAULT_TX_GPIO
+#define CONFIG_GW_UART_DEFAULT_TX_GPIO 20
+#endif
+
+#ifndef CONFIG_GW_UART_DEFAULT_RX_GPIO
+#define CONFIG_GW_UART_DEFAULT_RX_GPIO 21
+#endif
+
+#ifndef CONFIG_GW_UART_DEFAULT_RESET_GPIO
+#define CONFIG_GW_UART_DEFAULT_RESET_GPIO 255
+#endif
+
+#ifndef CONFIG_GW_UART_DEFAULT_CONTROL_GPIO
+#define CONFIG_GW_UART_DEFAULT_CONTROL_GPIO 255
+#endif
+
+#ifndef CONFIG_GW_CAN_DEFAULT_BAUD
+#define CONFIG_GW_CAN_DEFAULT_BAUD 500000
+#endif
+
+#define UART_DEFAULT_BAUD CONFIG_GW_UART_DEFAULT_BAUD
+
+#define UART_DEFAULT_LED_GPIO ((uint8_t)CONFIG_GW_UART_DEFAULT_LED_GPIO)
+#define UART_DEFAULT_TX_GPIO ((uint8_t)CONFIG_GW_UART_DEFAULT_TX_GPIO)
+#define UART_DEFAULT_RX_GPIO ((uint8_t)CONFIG_GW_UART_DEFAULT_RX_GPIO)
+#define UART_DEFAULT_RESET_GPIO ((uint8_t)CONFIG_GW_UART_DEFAULT_RESET_GPIO)
+#define UART_DEFAULT_CONTROL_GPIO ((uint8_t)CONFIG_GW_UART_DEFAULT_CONTROL_GPIO)
+#define CAN_DEFAULT_BAUD CONFIG_GW_CAN_DEFAULT_BAUD
 
 /* Stream buffer sizes - 32 KiB each direction */
 #define STREAM_BUFFER_SIZE (32 * 1024)
@@ -293,3 +322,9 @@ void uart_gateway_start(void);
 
 /* Stop gateway tasks and USB CDC */
 void uart_gateway_stop(void);
+
+/* Extended mode magic sequence constant shared with TCP parser */
+extern const uint8_t uart_extmode_magic[UART_EXTMODE_MAGIC_SIZE];
+
+/* Process a complete extended-mode packet */
+void uart_gateway_handle_extended_packet(uint16_t packet_type, const uint8_t *payload, size_t payload_len);

@@ -1,12 +1,9 @@
 #include "led.h"
-#include "esp_log.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "uart_gateway.h"
-
-#define TAG "LED"
 
 /* LED blink rates in Hz */
 #define LED_IDLE_FREQ 1
@@ -175,11 +172,10 @@ esp_err_t led_init(const uartgw_config_t *cfg)
     /* Create LED task */
     if (xTaskCreate(led_task, "led_task", 2048, NULL, 5, &led_task_handle) != pdPASS)
     {
-        ESP_LOGE(TAG, "Failed to create LED task");
+        send_message("ERR: LED task create failed");
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "LED initialized");
     return ESP_OK;
 }
 

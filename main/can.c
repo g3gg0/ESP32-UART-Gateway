@@ -3,14 +3,13 @@
 
 #include "can.h"
 #include "uart_gateway.h"
+#include "config_manager.h"
 
-#include "esp_log.h"
+#include "esp_err.h"
 #include "esp_timer.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#define TAG "CAN_MODULE"
 
 static bool can_session_active = false;
 static bool can_driver_installed = false;
@@ -139,7 +138,15 @@ esp_err_t can_start_session(uint8_t can_rx_gpio, uint8_t can_tx_gpio, uint32_t c
 
     if (can_baud == 0)
     {
-        can_baud = CAN_DEFAULT_BAUD;
+        const device_config_t *cfg = config_manager_get();
+        if (cfg->can_default_baud >= 25000 && cfg->can_default_baud <= 1000000)
+        {
+            can_baud = cfg->can_default_baud;
+        }
+        else
+        {
+            can_baud = CAN_DEFAULT_BAUD;
+        }
     }
 
     twai_timing_config_t t_config;
@@ -281,8 +288,6 @@ void can_read_task(void *pvParameters)
     twai_message_t message;
     twai_status_info_t status_info;
 
-    ESP_LOGI(TAG, "CAN read task started");
-
     while (1)
     {
         if (!can_session_active)
@@ -339,7 +344,7 @@ void can_read_task(void *pvParameters)
         }
         if (err != ESP_OK)
         {
-            ESP_LOGW(TAG, "CAN receive error: %s", esp_err_to_name(err));
+            send_message("CAN recv: %s", esp_err_to_name(err));
             continue;
         }
 
@@ -396,7 +401,7 @@ void can_read_task(void *pvParameters)
                                             (const uint8_t *)&frame, (uint16_t)sizeof(frame), true);
         if (qerr != ESP_OK)
         {
-            ESP_LOGW(TAG, "CAN queue RX frame failed: %s", esp_err_to_name(qerr));
+            send_message("CAN queue RX failed: %s", esp_err_to_name(qerr));
         }
     }
 }

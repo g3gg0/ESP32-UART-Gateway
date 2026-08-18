@@ -9,6 +9,7 @@
 
 #include "swd.h"
 #include "uart_gateway.h"
+#include "config_manager.h"
 
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
@@ -158,6 +159,12 @@ void swd_stop_session(void)
 
 esp_err_t swd_start_session(uint32_t io_mask, bool quiet)
 {
+    if (io_mask == 0)
+    {
+        const device_config_t *cfg = config_manager_get();
+        io_mask = cfg->swd_default_io_mask;
+    }
+
     uint32_t legal_io_mask = io_mask & gpio_legal_mask;
 
     if (quiet)
@@ -1194,8 +1201,16 @@ void swd_init(AppFSM *const ctx, uint32_t io_mask)
     memset(&ctx->apidr_info, 0x00, sizeof(ctx->apidr_info));
     ctx->hex_addr = 0x40002800;
     ctx->hex_addr = 0xE000EDF0;
-    ctx->swd_clock_delay = CLOCK_DELAY;
-    ctx->swd_idle_bits = IDLE_BITS;
+    {
+        const device_config_t *cfg = config_manager_get();
+        ctx->swd_clock_delay = cfg->swd_clock_delay_us;
+        ctx->swd_idle_bits = cfg->swd_idle_bits;
+
+        if (ctx->swd_idle_bits == 0)
+        {
+            ctx->swd_idle_bits = IDLE_BITS;
+        }
+    }
     ctx->swd_mutex = xSemaphoreCreateRecursiveMutex();
     xSemaphoreGive(ctx->swd_mutex);
 
