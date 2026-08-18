@@ -137,11 +137,13 @@ static esp_err_t open_next_log_file(void)
  * Space management helpers
  * ------------------------------------------------------------------ */
 
-static uint64_t get_free_bytes(void)
+static uint64_t get_space_info(uint64_t *out_total, uint64_t *out_used)
 {
     uint64_t total  = 0;
     uint64_t free_b = 0;
     esp_vfs_fat_info(LOGGER_MOUNT_POINT, &total, &free_b);
+    if (out_total) { *out_total = total; }
+    if (out_used)  { *out_used  = total - free_b; }
     return free_b;
 }
 
@@ -235,7 +237,9 @@ static void apply_space_policy(void)
         return;
     }
 
-    uint64_t free_b    = get_free_bytes();
+    uint64_t total_b = 0;
+    uint64_t used_b  = 0;
+    uint64_t free_b  = get_space_info(&total_b, &used_b);
     uint64_t threshold = (uint64_t)CONFIG_LOGGER_SPACE_THRESHOLD_KB * 1024u;
 
     if (free_b >= threshold)
@@ -253,15 +257,33 @@ static void apply_space_policy(void)
         fclose(s_log_file);
         s_log_file = NULL;
     }
-    send_message("LOGGER: storage low (%u B), stopped", (unsigned int)free_b);
+    send_message("LOGGER: storage low, stopped (used %u / %u B, free %u B)",
+                 (unsigned int)used_b, (unsigned int)total_b, (unsigned int)free_b);
 
 #elif defined(CONFIG_LOGGER_POLICY_ROTATE)
 
     uint32_t oldest = find_oldest_counter();
     if (oldest == UINT32_MAX)
     {
-        /* Only the current file exists - cannot reclaim space */
-        send_message("LOGGER: low space, no older file (%u B)", (unsigned int)free_b);
+        /*
+         * Only the current file exists - delete it and start a new one so
+         * writing can continue.  The oldest data in the current file is lost,
+         * but this keeps the logger running instead of stalling forever.
+         */
+        send_message("LOGGER: low space, recycling current file (used %u / %u B, free %u B)",
+                     (unsigned int)used_b, (unsigned int)total_b, (unsigned int)free_b);
+        char cur_path[LOGGER_MAX_PATH_LEN];
+        snprintf(cur_path, sizeof(cur_path), "%s/%s%06lu.bin",
+                 LOGGER_MOUNT_POINT, CONFIG_LOGGER_FILENAME_PREFIX,
+                 (unsigned long)s_file_counter);
+        if (s_log_file != NULL)
+        {
+            fclose(s_log_file);
+            s_log_file = NULL;
+        }
+        remove(cur_path);
+        s_file_counter--;  /* open_next_log_file() will increment it back */
+        open_next_log_file();
         return;
     }
 
@@ -269,11 +291,13 @@ static void apply_space_policy(void)
     snprintf(path, sizeof(path), "%s/%s%06lu.bin",
              LOGGER_MOUNT_POINT, CONFIG_LOGGER_FILENAME_PREFIX, (unsigned long)oldest);
     remove(path);
-    send_message("LOGGER: deleted %s (%u B free)", path, (unsigned int)free_b);
+    send_message("LOGGER: deleted %s (used %u / %u B, free %u B)",
+                 path, (unsigned int)used_b, (unsigned int)total_b, (unsigned int)free_b);
 
 #elif defined(CONFIG_LOGGER_POLICY_ERASE)
 
-    send_message("LOGGER: low space (%u B), erasing all", (unsigned int)free_b);
+    send_message("LOGGER: low space, erasing all (used %u / %u B, free %u B)",
+                 (unsigned int)used_b, (unsigned int)total_b, (unsigned int)free_b);
     erase_all_log_files();
     open_next_log_file();
 
@@ -387,7 +411,7 @@ esp_err_t logger_init(void)
     esp_vfs_fat_mount_config_t mount_cfg = {
         .format_if_mount_failed = true,
         .max_files              = 4,
-        .allocation_unit_size   = 512,
+        .allocation_unit_size   = 4096, /* match WL/flash sector size */
     };
 
     esp_err_t err = esp_vfs_fat_spiflash_mount_rw_wl(
@@ -402,10 +426,44 @@ esp_err_t logger_init(void)
         return err;
     }
 
+    /*
+     * Sanity-check free space.  If less than 25% of the partition is free
+     * and no log files exist at all, the FAT on-flash is stale (e.g. left
+     * over from a smaller partition or a corrupted format run).  Reformat
+     * in-place so the full partition becomes available.
+     */
+    uint64_t total_b = 0;
+    uint64_t free_b  = 0;
+    esp_vfs_fat_info(LOGGER_MOUNT_POINT, &total_b, &free_b);
     uint32_t highest = find_highest_counter();
-    s_file_counter   = highest;
 
-    send_message("LOGGER: mounted, next file %lu", (unsigned long)(highest + 1u));
+    if (total_b > 0 && free_b < (total_b / 4) && highest == 0)
+    {
+        send_message("LOGGER: stale FAT (free %u / %u B), reformatting...",
+                     (unsigned int)free_b, (unsigned int)total_b);
+
+        esp_err_t fmt_err = esp_vfs_fat_spiflash_format_rw_wl(
+            LOGGER_MOUNT_POINT, CONFIG_LOGGER_PARTITION_LABEL);
+
+        if (fmt_err != ESP_OK)
+        {
+            send_message("LOGGER ERR: reformat failed: %s", esp_err_to_name(fmt_err));
+            /* Continue; worst case we run out of space quickly */
+        }
+        else
+        {
+            esp_vfs_fat_info(LOGGER_MOUNT_POINT, &total_b, &free_b);
+            send_message("LOGGER: reformatted OK, free %u / %u B",
+                         (unsigned int)free_b, (unsigned int)total_b);
+        }
+
+        highest = 0;
+    }
+
+    s_file_counter = highest;
+    send_message("LOGGER: mounted, next file %lu (free %u / %u B)",
+                 (unsigned long)(highest + 1u),
+                 (unsigned int)free_b, (unsigned int)total_b);
     return ESP_OK;
 }
 

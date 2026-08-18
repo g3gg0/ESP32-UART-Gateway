@@ -17,6 +17,8 @@
 #include "wifi_manager.h"
 
 
+#define TAG "ESP32-UART"
+
 static void initialize_nvs(void)
 {
     esp_err_t err = nvs_flash_init();

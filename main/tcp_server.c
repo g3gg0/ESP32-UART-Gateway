@@ -6,14 +6,12 @@
 #include <errno.h>
 
 #include "tcp_server.h"
-#include "esp_log.h"
+#include "uart_gateway.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
-
-#define TAG "TCP_SERVER"
 
 #define TCP_CLIENT_RX_BUFFER_SIZE 256
 #define TCP_OUT_QUEUE_DEPTH 64
@@ -399,7 +397,7 @@ esp_err_t tcp_server_start(void)
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     if (listen_sock < 0)
     {
-        ESP_LOGE(TAG, "socket failed: errno=%d", errno);
+        send_message("TCP socket failed: errno=%d", errno);
         return ESP_FAIL;
     }
 
@@ -416,7 +414,7 @@ esp_err_t tcp_server_start(void)
 
     if (bind(listen_sock, (struct sockaddr *)&listen_addr, sizeof(listen_addr)) < 0)
     {
-        ESP_LOGE(TAG, "bind failed: errno=%d", errno);
+        send_message("TCP bind failed: errno=%d", errno);
         close(listen_sock);
         listen_sock = -1;
         return ESP_FAIL;
@@ -424,7 +422,7 @@ esp_err_t tcp_server_start(void)
 
     if (listen(listen_sock, CONFIG_GW_TCP_MAX_CLIENTS) < 0)
     {
-        ESP_LOGE(TAG, "listen failed: errno=%d", errno);
+        send_message("TCP listen failed: errno=%d", errno);
         close(listen_sock);
         listen_sock = -1;
         return ESP_FAIL;
@@ -450,7 +448,6 @@ esp_err_t tcp_server_start(void)
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "TCP protocol server started on port %d", CONFIG_GW_TCP_SERVER_PORT);
     return ESP_OK;
 }
 

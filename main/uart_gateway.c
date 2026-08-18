@@ -1005,8 +1005,6 @@ esp_err_t queue_packet(uart_packet_header_t *packet)
         }
     }
 
-    tcp_server_fanout_packet(packet);
-
     if (xQueueSend(gateway_ctx.uart_to_cdc_buffer, &packet, wait_ticks) == pdTRUE)
     {
         taskYIELD();
@@ -1238,11 +1236,11 @@ static void uart_write_task(void *pvParameters)
             continue;
         }
 
-        if (current_mode != UART_GW_MODE_UART)
-        {
-            vTaskDelay(20 / portTICK_PERIOD_MS);
-            continue;
-        }
+        //if (current_mode != UART_GW_MODE_UART)
+        //{
+        //    vTaskDelay(20 / portTICK_PERIOD_MS);
+        //    continue;
+        //}
 
         bytes_to_send = uart_gateway_receive_cdc_queue(uart_write_buffer, UART_BUFFER_SIZE);
 
@@ -1285,11 +1283,6 @@ static void uart_read_task(void *pvParameters)
         /* Always mirror raw bytes to the logger regardless of gateway mode */
         logger_enqueue_data(uart_read_buffer, bytes_received);
 
-        /* Only forward to the CDC queue when the host has selected UART mode */
-        if (current_mode != UART_GW_MODE_UART)
-        {
-            continue;
-        }
 
         led_signal_uart_activity();
         uart_packet_header_t *packet = (uart_packet_header_t *)malloc(sizeof(uart_packet_header_t) + bytes_received);
@@ -1303,6 +1296,14 @@ static void uart_read_task(void *pvParameters)
 
         memcpy(PTR_BEHIND(packet), uart_read_buffer, bytes_received);
 
+        tcp_server_fanout_packet(packet);
+
+        /* Only forward to the CDC queue when the host has selected UART mode */
+        if (current_mode != UART_GW_MODE_UART)
+        {
+            free(packet);
+            continue;
+        }
         queue_packet(packet);
     }
 }

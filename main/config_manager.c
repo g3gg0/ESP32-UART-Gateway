@@ -1,11 +1,10 @@
 #include <string.h>
 
 #include "config_manager.h"
+#include "uart_gateway.h"
 #include "sdkconfig.h"
 #include "nvs.h"
-#include "esp_log.h"
-
-#define TAG "CONFIG"
+#include "esp_err.h"
 
 #ifndef CONFIG_GW_UART_DEFAULT_BAUD
 #define CONFIG_GW_UART_DEFAULT_BAUD 115200
@@ -198,7 +197,7 @@ esp_err_t config_manager_load_all(void)
                 current_ns = NULL;
                 if (open_err != ESP_ERR_NVS_NOT_FOUND)
                 {
-                    ESP_LOGW(TAG, "nvs_open(%s) failed: %s", field->nvs_namespace, esp_err_to_name(open_err));
+                    send_message("CFG: nvs_open(%s) failed: %s", field->nvs_namespace, esp_err_to_name(open_err));
                 }
                 continue;
             }
@@ -209,7 +208,7 @@ esp_err_t config_manager_load_all(void)
         esp_err_t err = load_field(nvs_handle, field);
         if (err != ESP_OK)
         {
-            ESP_LOGW(TAG, "load %s/%s failed: %s", field->nvs_namespace, field->nvs_key, esp_err_to_name(err));
+            send_message("CFG: load %s/%s failed: %s", field->nvs_namespace, field->nvs_key, esp_err_to_name(err));
             status = err;
         }
     }
@@ -258,7 +257,7 @@ esp_err_t config_manager_save_all(void)
         esp_err_t err = save_field(nvs_handle, field);
         if (err != ESP_OK)
         {
-            ESP_LOGW(TAG, "save %s/%s failed: %s", field->nvs_namespace, field->nvs_key, esp_err_to_name(err));
+            send_message("CFG: save %s/%s failed: %s", field->nvs_namespace, field->nvs_key, esp_err_to_name(err));
             status = err;
         }
     }

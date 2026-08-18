@@ -10,6 +10,7 @@
 #include "wifi_manager.h"
 #include "config_manager.h"
 #include "tcp_server.h"
+#include "uart_gateway.h"
 
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -32,8 +33,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-
-#define TAG "WIFI_MGR"
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
@@ -921,13 +920,12 @@ esp_err_t wifi_manager_start(void)
 
         if (bits & WIFI_CONNECTED_BIT)
         {
-            ESP_LOGI(TAG, "WiFi STA connected");
             start_http_server(false);
             tcp_server_start();
             return ESP_OK;
         }
 
-        ESP_LOGW(TAG, "WiFi STA connect failed, switching to AP captive portal");
+        send_message("WiFi STA connect failed, switching to AP captive portal");
         esp_wifi_stop();
     }
 
