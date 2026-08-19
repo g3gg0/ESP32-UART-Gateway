@@ -87,11 +87,15 @@ static const config_field_desc_t g_fields[] = {
     { "UART", "CONTROL GPIO", "uart_config", "control_gpio", CONFIG_FIELD_U8, FIELD_OFFSET(uart_control_gpio), 0, 0, 255 },
     { "UART", "LED GPIO", "uart_config", "led_gpio", CONFIG_FIELD_U8, FIELD_OFFSET(uart_led_gpio), 0, 0, 255 },
 
+#if CONFIG_GW_CAN_ENABLED
     { "CAN", "Default Baud", "can_config", "baud", CONFIG_FIELD_U32, FIELD_OFFSET(can_default_baud), 0, 25000, 1000000 },
+#endif
 
+#if CONFIG_GW_SWD_ENABLED
     { "SWD", "Default IO Mask", "swd_config", "io_mask", CONFIG_FIELD_U32, FIELD_OFFSET(swd_default_io_mask), 0, 0, 0xFFFFFFFF },
     { "SWD", "Clock Delay (us)", "swd_config", "clock_delay", CONFIG_FIELD_U32, FIELD_OFFSET(swd_clock_delay_us), 0, 0, 1000 },
     { "SWD", "Idle Bits", "swd_config", "idle_bits", CONFIG_FIELD_U32, FIELD_OFFSET(swd_idle_bits), 0, 1, 64 },
+#endif
 
     { "Network", "Device Name (DHCP/mDNS)", "wifi_config", "device_name", CONFIG_FIELD_STR, FIELD_OFFSET(device_name), DEVICE_NAME_MAX_LEN, 0, 0 },
 

@@ -103,6 +103,24 @@ endmenu
 
 menu "Protocol Defaults"
 
+    config GW_CAN_ENABLED
+        bool "Compile CAN support"
+        default y
+        help
+            Include CAN packet handling and the CAN receive task.
+
+    config GW_SWD_ENABLED
+        bool "Compile SWD support"
+        default y
+        help
+            Include SWD packet handling and debug access routines.
+
+    config GW_LENS_ENABLED
+        bool "Compile Canon EF Lens support"
+        default y
+        help
+            Include Canon EF electrical configuration, transfer, and reset support.
+
     config GW_UART_DEFAULT_BAUD
         int "Default UART baud rate"
         range 300 1000000
@@ -137,16 +155,19 @@ menu "Protocol Defaults"
         int "Default CAN baud rate"
         range 25000 1000000
         default 500000
+        depends on GW_CAN_ENABLED
 
     config GW_SWD_DEFAULT_CLOCK_DELAY
         int "Default SWD clock delay (us)"
         range 0 1000
         default 0
+        depends on GW_SWD_ENABLED
 
     config GW_SWD_DEFAULT_IDLE_BITS
         int "Default SWD idle bits"
         range 1 64
         default 8
+        depends on GW_SWD_ENABLED
 
 endmenu
 

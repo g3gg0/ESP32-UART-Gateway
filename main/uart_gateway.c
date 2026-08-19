@@ -4,8 +4,12 @@
 #include <stdio.h>
 
 #include "uart_gateway.h"
+#if CONFIG_GW_CAN_ENABLED
 #include "can.h"
+#endif
+#if CONFIG_GW_LENS_ENABLED
 #include "canonef.h"
+#endif
 #include "led.h"
 #include "esp_err.h"
 #include "driver/uart.h"
@@ -16,7 +20,9 @@
 #include "freertos/stream_buffer.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#if CONFIG_GW_SWD_ENABLED
 #include "swd.h"
+#endif
 #include "logger.h"
 #include "tcp_server.h"
 
@@ -52,15 +58,21 @@ static void uart_gateway_switch_mode(uart_gw_mode_t new_mode)
 
     if (current_mode == UART_GW_MODE_SWD)
     {
+#if CONFIG_GW_SWD_ENABLED
         swd_stop_session();
+#endif
     }
     else if (current_mode == UART_GW_MODE_CAN)
     {
+#if CONFIG_GW_CAN_ENABLED
         can_stop_session();
+#endif
     }
     else if (current_mode == UART_GW_MODE_CANON_EF_LENS)
     {
+#if CONFIG_GW_LENS_ENABLED
         canonef_stop_session();
+#endif
     }
 
     current_mode = new_mode;
@@ -82,7 +94,9 @@ static TaskHandle_t cdc_read_task_handle = NULL;
 static TaskHandle_t cdc_write_task_handle = NULL;
 static TaskHandle_t uart_read_task_handle = NULL;
 static TaskHandle_t uart_write_task_handle = NULL;
+#if CONFIG_GW_CAN_ENABLED
 static TaskHandle_t can_read_task_handle = NULL;
+#endif
 
 /* Task buffers (global to save stack space) */
 static uint8_t cdc_read_buffer[CDC_BUFFER_SIZE];
@@ -155,27 +169,47 @@ void uart_gateway_handle_extended_packet(uint16_t packet_type, const uint8_t *pa
         break;
 
     case UART_PACKET_TYPE_SWD:
+#if CONFIG_GW_SWD_ENABLED
         uart_gateway_switch_mode(UART_GW_MODE_SWD);
         (void)swd_handle_packet(payload, payload_len);
+#else
+        send_message("ERR: SWD support is not compiled in");
+#endif
         break;
 
     case UART_PACKET_TYPE_CAN:
+#if CONFIG_GW_CAN_ENABLED
         uart_gateway_switch_mode(UART_GW_MODE_CAN);
         (void)can_handle_packet(payload, payload_len);
+#else
+        send_message("ERR: CAN support is not compiled in");
+#endif
         break;
 
     case UART_PACKET_TYPE_LENS_CONFIG:
+#if CONFIG_GW_LENS_ENABLED
         uart_gateway_switch_mode(UART_GW_MODE_CANON_EF_LENS);
         (void)canonef_handle_config_packet(payload, payload_len);
+#else
+        send_message("ERR: Canon EF Lens support is not compiled in");
+#endif
         break;
 
     case UART_PACKET_TYPE_LENS_XFER:
+#if CONFIG_GW_LENS_ENABLED
         (void)canonef_handle_xfer_packet(payload, payload_len);
+#else
+        send_message("ERR: Canon EF Lens support is not compiled in");
+#endif
         break;
 
     case UART_PACKET_TYPE_LENS_RESET:
+#if CONFIG_GW_LENS_ENABLED
         uart_gateway_switch_mode(UART_GW_MODE_CANON_EF_LENS);
         (void)canonef_handle_reset_packet(payload, payload_len);
+#else
+        send_message("ERR: Canon EF Lens support is not compiled in");
+#endif
         break;
 
     default:
@@ -407,13 +441,23 @@ static bool parse_control_command(const char *cmd, size_t cmd_len)
             send_message("Mode set: UART");
             return true;
         case 'S':
+#if CONFIG_GW_SWD_ENABLED
             uart_gateway_switch_mode(UART_GW_MODE_SWD);
             send_message("Mode set: SWD");
             return true;
+#else
+            send_message("ERR: SWD support is not compiled in");
+            return false;
+#endif
         case 'C':
+#if CONFIG_GW_CAN_ENABLED
             uart_gateway_switch_mode(UART_GW_MODE_CAN);
             send_message("Mode set: CAN");
             return true;
+#else
+            send_message("ERR: CAN support is not compiled in");
+            return false;
+#endif
         default:
             send_message("Unknown mode in M: command: '%c'", cmd_buffer[2]);
             return false;
@@ -762,8 +806,12 @@ bool uart_gateway_is_ready(void)
 void uart_gateway_deinit(void)
 {
     uart_gateway_switch_mode(UART_GW_MODE_UART);
+#if CONFIG_GW_CAN_ENABLED
     can_stop_session();
+#endif
+#if CONFIG_GW_LENS_ENABLED
     canonef_stop_session();
+#endif
 
     if (gateway_ctx.is_configured)
     {
@@ -1016,6 +1064,7 @@ esp_err_t queue_packet(uart_packet_header_t *packet)
     TickType_t wait_ticks = portMAX_DELAY;
 
     /* Never let CAN RX frame packets block control path. Drop on full queue. */
+#if CONFIG_GW_CAN_ENABLED
     if (packet->type == UART_PACKET_TYPE_CAN &&
         packet->length >= (uint16_t)(UART_PACKET_HEADER_SIZE + sizeof(can_uart_rsp_hdr_t)))
     {
@@ -1025,6 +1074,7 @@ esp_err_t queue_packet(uart_packet_header_t *packet)
             wait_ticks = 0;
         }
     }
+#endif
 
     if (xQueueSend(gateway_ctx.uart_to_cdc_buffer, &packet, wait_ticks) == pdTRUE)
     {
@@ -1443,7 +1493,11 @@ void uart_gateway_start(void)
     BaseType_t ret2 = xTaskCreatePinnedToCore(uart_write_task, "uart_write", 4096, NULL, 5, &uart_write_task_handle, 0);
     BaseType_t ret3 = xTaskCreatePinnedToCore(uart_read_task, "uart_read", 4096, NULL, 5, &uart_read_task_handle, 0);
     BaseType_t ret4 = xTaskCreatePinnedToCore(cdc_write_task, "cdc_write", 4096, NULL, 5, &cdc_write_task_handle, 0);
+#if CONFIG_GW_CAN_ENABLED
     BaseType_t ret5 = xTaskCreatePinnedToCore(can_read_task, "can_read", 4096, NULL, 5, &can_read_task_handle, 0);
+#else
+    BaseType_t ret5 = pdPASS;
+#endif
 
     if (!(ret1 == pdPASS && ret2 == pdPASS && ret3 == pdPASS && ret4 == pdPASS && ret5 == pdPASS))
     {
@@ -1474,15 +1528,21 @@ void uart_gateway_stop(void)
         vTaskDelete(cdc_write_task_handle);
         cdc_write_task_handle = NULL;
     }
+#if CONFIG_GW_CAN_ENABLED
     if (can_read_task_handle)
     {
         vTaskDelete(can_read_task_handle);
         can_read_task_handle = NULL;
     }
+#endif
 
     uart_gateway_switch_mode(UART_GW_MODE_UART);
+#if CONFIG_GW_CAN_ENABLED
     can_stop_session();
+#endif
+#if CONFIG_GW_LENS_ENABLED
     canonef_stop_session();
+#endif
 
     /* Uninstall USB CDC */
     usb_serial_jtag_driver_uninstall();
