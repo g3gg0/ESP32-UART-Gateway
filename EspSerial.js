@@ -33,6 +33,11 @@ class EspSerial {
         this._canPending = new Map(); /* seq -> { resolve, reject, timer } */
         this._canDefaultTimeoutMs = 1500;
 
+        /* Canon EF requests have no sequence field; only one may be in flight. */
+        this._lensPending = null;
+        this._lensDefaultTimeoutMs = 5000;
+        this._canonEfIncludeAck = false;
+
         /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
         this.EXTMODE_MAGIC = new Uint8Array([
             0x0C, 0x00,  /* length: 12 (4 bytes header + 8 bytes payload) */
@@ -50,6 +55,9 @@ class EspSerial {
         this.PACKET_TYPE_LOG = 0x03;
         this.UART_PACKET_TYPE_SWD = 0x04;
         this.UART_PACKET_TYPE_CAN = 0x05;
+        this.UART_PACKET_TYPE_LENS_CONFIG = 0x06;
+        this.UART_PACKET_TYPE_LENS_XFER = 0x07;
+        this.UART_PACKET_TYPE_LENS_RESET = 0x08;
 
         this.CTRL_CMD_SIZE = 16;
         this.LOGMSG_MAX_LEN = 256;
@@ -151,16 +159,18 @@ class EspSerial {
             await new Promise(resolve => setTimeout(resolve, 500));
             logToConsole('ESP Serial: Connected', 'info');
 
-            /* Send extended mode activation magic */
-            const magic = this.buildExtModeActivationPacket();
-            await this.sendPacket(magic, 'ExtMode Magic');
-            
-            logToConsole('ESP Serial: Extended mode activation sent', 'info');
             this.extendedMode = true;
 
             /* Wait for first log message to confirm extended mode is working */
             logToConsole('ESP Serial: Waiting for log message...', 'info');
-            const logMsg = await this.waitForLogMessage(2000);
+            const logPromise = this.waitForLogMessage(2000);
+
+            /* Send extended mode activation magic after the waiter is armed. */
+            const magic = this.buildExtModeActivationPacket();
+            await this.sendPacket(magic, 'ExtMode Magic');
+            logToConsole('ESP Serial: Extended mode activation sent', 'info');
+
+            const logMsg = await logPromise;
             if (!logMsg) {
                 throw new Error('No log message received after extended mode activation - device may not be responding');
             }
@@ -232,6 +242,7 @@ class EspSerial {
     notifyDisconnect(info) {
         this._rejectAllSwdPending(new Error('Disconnected'));
         this._rejectAllCanPending(new Error('Disconnected'));
+        this._rejectLensPending(new Error('Disconnected'));
         if (this.disconnect_cbr) {
             try {
                 this.disconnect_cbr(info);
@@ -273,6 +284,14 @@ class EspSerial {
             }
             this._canPending.delete(seq);
         }
+    }
+
+    _rejectLensPending(err) {
+        if (!this._lensPending) return;
+        const pending = this._lensPending;
+        this._lensPending = null;
+        if (pending.timer) clearTimeout(pending.timer);
+        if (pending.reject) pending.reject(err);
     }
 
     async handlePortDisconnect(reason) {
@@ -506,6 +525,89 @@ class EspSerial {
             return true;
         };
 
+        const emitLensConfig = (payload) => {
+            if (!payload || payload.length < 1) return false;
+
+            const packet = {
+                type: 'canonef_config_packet',
+                status: payload[0] >>> 0,
+                config: null,
+                raw: payload
+            };
+
+            /* Successful responses contain status followed by the 12-byte config. */
+            if (payload.length >= 13) {
+                const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+                packet.config = {
+                    dcl_gpio: payload[1] >>> 0,
+                    dlc_gpio: payload[2] >>> 0,
+                    lclk_out_gpio: payload[3] >>> 0,
+                    lclk_in_gpio: payload[4] >>> 0,
+                    inversion_mask: payload[5] >>> 0,
+                    flags: payload[6] >>> 0,
+                    reserved: view.getUint16(7, true),
+                    clock_hz: view.getUint32(9, true)
+                };
+            }
+
+            if (this._lensPending && this._lensPending.kind === 'config') {
+                const pending = this._lensPending;
+                this._lensPending = null;
+                if (pending.timer) clearTimeout(pending.timer);
+                pending.resolve(packet);
+            }
+            return true;
+        };
+
+        const emitLensXfer = (payload) => {
+            if (!payload || payload.length < 1) return false;
+
+            const pending = this._lensPending;
+            const includeAck = !!(pending && pending.kind === 'xfer' && pending.includeAck);
+            const data = payload.slice(1);
+            const packet = {
+                type: 'canonef_xfer_packet',
+                status: payload[0] >>> 0,
+                data,
+                records: [],
+                raw: payload
+            };
+
+            if (includeAck && data.length % 3 === 0) {
+                for (let offset = 0; offset < data.length; offset += 3) {
+                    packet.records.push({
+                        ack_us: (data[offset] | (data[offset + 1] << 8)) >>> 0,
+                        rx: data[offset + 2] >>> 0
+                    });
+                }
+            } else {
+                packet.records = Array.from(data, (value) => ({ rx: value >>> 0 }));
+            }
+
+            if (pending && pending.kind === 'xfer') {
+                this._lensPending = null;
+                if (pending.timer) clearTimeout(pending.timer);
+                pending.resolve(packet);
+            }
+            return true;
+        };
+
+        const emitLensReset = (payload) => {
+            if (!payload || payload.length < 1) return false;
+            const packet = {
+                type: 'canonef_reset_packet',
+                status: payload[0] >>> 0,
+                raw: payload
+            };
+            if (this._lensPending && this._lensPending.kind === 'reset') {
+                const pending = this._lensPending;
+                this._lensPending = null;
+                if (pending.timer) clearTimeout(pending.timer);
+                pending.resolve(packet);
+            }
+            return true;
+        };
+
         if (!this.extendedMode) {
             /* In non-extended mode, just pass through all data */
             if (this.rxBuffer.length > 0) {
@@ -557,6 +659,12 @@ class EspSerial {
             } else if (type === this.UART_PACKET_TYPE_CAN) {
                 /* Type 0x05: CAN binary packets */
                 emitCan(payload);
+            } else if (type === this.UART_PACKET_TYPE_LENS_CONFIG) {
+                emitLensConfig(payload);
+            } else if (type === this.UART_PACKET_TYPE_LENS_XFER) {
+                emitLensXfer(payload);
+            } else if (type === this.UART_PACKET_TYPE_LENS_RESET) {
+                emitLensReset(payload);
             } else {
                 /* Unknown packet type, pass through as data */
                 emitData(payload, type);
@@ -817,6 +925,95 @@ class EspSerial {
         else throw new Error(`Unknown gateway mode: ${mode}`);
 
         await this.sendControlCommand(`M:${token}`, `Mode:${raw}`);
+    }
+
+    async configureCanonEFLens(config, options = {}) {
+        if (!this.port) throw new Error('Port not connected');
+        if (!config || typeof config !== 'object') throw new Error('Canon EF config is required');
+
+        const payload = new Uint8Array(12);
+        const view = new DataView(payload.buffer);
+        payload[0] = (config.dcl_gpio ?? 0xFF) & 0xFF;
+        payload[1] = (config.dlc_gpio ?? 0xFF) & 0xFF;
+        payload[2] = (config.lclk_out_gpio ?? 0xFF) & 0xFF;
+        payload[3] = (config.lclk_in_gpio ?? 0xFF) & 0xFF;
+        payload[4] = (config.inversion_mask ?? 0) & 0xFF;
+        payload[5] = (config.flags ?? 0) & 0xFF;
+        view.setUint16(6, (config.reserved ?? 0) & 0xFFFF, true);
+        view.setUint32(8, (config.clock_hz ?? 500000) >>> 0, true);
+        this._canonEfIncludeAck = (payload[5] & 0x01) !== 0;
+
+        const timeoutMs = options.timeoutMs || this._lensDefaultTimeoutMs;
+        if (this._lensPending) throw new Error('Canon EF request already pending');
+
+        const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_LENS_CONFIG);
+        return new Promise(async (resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._lensPending = null;
+                reject(new Error('Canon EF config timeout'));
+            }, timeoutMs);
+            this._lensPending = { kind: 'config', resolve, reject, timer };
+
+            try {
+                await this.sendPacket(packet, 'Canon EF config');
+            } catch (err) {
+                clearTimeout(timer);
+                this._lensPending = null;
+                reject(err);
+            }
+        });
+    }
+
+    async canonEFLensTransfer(data, options = {}) {
+        if (!this.port) throw new Error('Port not connected');
+        const tx = data instanceof Uint8Array ? data : new Uint8Array(data || []);
+        if (tx.length === 0) throw new Error('Canon EF transfer requires at least one byte');
+        if (tx.length > 4096) throw new Error('Canon EF transfer is limited to 4096 bytes');
+        if (this._lensPending) throw new Error('Canon EF request already pending');
+
+        const includeAck = options.includeAck !== undefined
+            ? !!options.includeAck
+            : !!this._canonEfIncludeAck;
+        const timeoutMs = options.timeoutMs || this._lensDefaultTimeoutMs;
+        const packet = this.buildPacket(tx, this.UART_PACKET_TYPE_LENS_XFER);
+
+        return new Promise(async (resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._lensPending = null;
+                reject(new Error('Canon EF transfer timeout'));
+            }, timeoutMs);
+            this._lensPending = { kind: 'xfer', includeAck, resolve, reject, timer };
+
+            try {
+                await this.sendPacket(packet, `Canon EF transfer (${tx.length} bytes)`);
+            } catch (err) {
+                clearTimeout(timer);
+                this._lensPending = null;
+                reject(err);
+            }
+        });
+    }
+
+    async canonEFLensReset(options = {}) {
+        if (!this.port) throw new Error('Port not connected');
+        if (this._lensPending) throw new Error('Canon EF request already pending');
+
+        const timeoutMs = options.timeoutMs || 5000;
+        const packet = this.buildPacket(new Uint8Array(0), this.UART_PACKET_TYPE_LENS_RESET);
+        return new Promise(async (resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._lensPending = null;
+                reject(new Error('Canon EF reset timeout'));
+            }, timeoutMs);
+            this._lensPending = { kind: 'reset', resolve, reject, timer };
+            try {
+                await this.sendPacket(packet, 'Canon EF reset');
+            } catch (err) {
+                clearTimeout(timer);
+                this._lensPending = null;
+                reject(err);
+            }
+        });
     }
 
     async requestConfig() {

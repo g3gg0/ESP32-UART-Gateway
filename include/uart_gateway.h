@@ -74,6 +74,9 @@ typedef enum
     UART_PACKET_TYPE_LOG = 0x03,     /* Log messages from ESP32 */
     UART_PACKET_TYPE_SWD = 0x04,     /* SWD commands */
     UART_PACKET_TYPE_CAN = 0x05,     /* CAN commands + RX frames */
+    UART_PACKET_TYPE_LENS_CONFIG = 0x06, /* Canon EF electrical configuration */
+    UART_PACKET_TYPE_LENS_XFER = 0x07,   /* Canon EF raw byte transfer */
+    UART_PACKET_TYPE_LENS_RESET = 0x08,  /* Canon EF LCLK reset pulse */
     UART_PACKET_TYPE_EXTMODE = 0x0A  /* Extended mode activation packet */
 } uart_packet_type_t;
 

@@ -5,6 +5,7 @@
 
 #include "uart_gateway.h"
 #include "can.h"
+#include "canonef.h"
 #include "led.h"
 #include "esp_err.h"
 #include "driver/uart.h"
@@ -36,6 +37,7 @@ typedef enum
     UART_GW_MODE_UART = 1,
     UART_GW_MODE_SWD = 2,
     UART_GW_MODE_CAN = 3,
+    UART_GW_MODE_CANON_EF_LENS = 4,
 } uart_gw_mode_t;
 
 static volatile uart_gw_mode_t current_mode = UART_GW_MODE_NONE;
@@ -55,6 +57,10 @@ static void uart_gateway_switch_mode(uart_gw_mode_t new_mode)
     else if (current_mode == UART_GW_MODE_CAN)
     {
         can_stop_session();
+    }
+    else if (current_mode == UART_GW_MODE_CANON_EF_LENS)
+    {
+        canonef_stop_session();
     }
 
     current_mode = new_mode;
@@ -156,6 +162,20 @@ void uart_gateway_handle_extended_packet(uint16_t packet_type, const uint8_t *pa
     case UART_PACKET_TYPE_CAN:
         uart_gateway_switch_mode(UART_GW_MODE_CAN);
         (void)can_handle_packet(payload, payload_len);
+        break;
+
+    case UART_PACKET_TYPE_LENS_CONFIG:
+        uart_gateway_switch_mode(UART_GW_MODE_CANON_EF_LENS);
+        (void)canonef_handle_config_packet(payload, payload_len);
+        break;
+
+    case UART_PACKET_TYPE_LENS_XFER:
+        (void)canonef_handle_xfer_packet(payload, payload_len);
+        break;
+
+    case UART_PACKET_TYPE_LENS_RESET:
+        uart_gateway_switch_mode(UART_GW_MODE_CANON_EF_LENS);
+        (void)canonef_handle_reset_packet(payload, payload_len);
         break;
 
     default:
@@ -743,6 +763,7 @@ void uart_gateway_deinit(void)
 {
     uart_gateway_switch_mode(UART_GW_MODE_UART);
     can_stop_session();
+    canonef_stop_session();
 
     if (gateway_ctx.is_configured)
     {
@@ -1187,6 +1208,14 @@ static void cdc_read_task(void *pvParameters)
                                 continue;
                             }
                         }
+
+                        /* A header-only packet is complete immediately. */
+                        if (payload_needed == 0)
+                        {
+                            uart_gateway_handle_extended_packet(header->type, NULL, 0);
+                            header_received = false;
+                            header_pos = 0;
+                        }
                     }
                 }
                 else
@@ -1266,8 +1295,10 @@ static void uart_read_task(void *pvParameters)
             continue;
         }
 
-        /* In SWD/CAN modes the UART peripheral is not in use - do not read */
-        if (current_mode == UART_GW_MODE_SWD || current_mode == UART_GW_MODE_CAN)
+        /* In non-UART peripheral modes the UART peripheral is not in use. */
+        if (current_mode == UART_GW_MODE_SWD ||
+            current_mode == UART_GW_MODE_CAN ||
+            current_mode == UART_GW_MODE_CANON_EF_LENS)
         {
             vTaskDelay(20 / portTICK_PERIOD_MS);
             continue;
@@ -1451,6 +1482,7 @@ void uart_gateway_stop(void)
 
     uart_gateway_switch_mode(UART_GW_MODE_UART);
     can_stop_session();
+    canonef_stop_session();
 
     /* Uninstall USB CDC */
     usb_serial_jtag_driver_uninstall();
