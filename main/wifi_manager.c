@@ -847,8 +847,8 @@ static void start_fallback_ap(void)
 
     wifi_config_t ap_config = { 0 };
 
-    strncpy((char *)ap_config.ap.ssid, cfg->wifi_ap_ssid, sizeof(ap_config.ap.ssid) - 1);
-    strncpy((char *)ap_config.ap.password, cfg->wifi_ap_password, sizeof(ap_config.ap.password) - 1);
+    strlcpy((char *)ap_config.ap.ssid, cfg->wifi_ap_ssid, sizeof(ap_config.ap.ssid));
+    strlcpy((char *)ap_config.ap.password, cfg->wifi_ap_password, sizeof(ap_config.ap.password));
     ap_config.ap.ssid_len = strlen((char *)ap_config.ap.ssid);
     ap_config.ap.channel = cfg->wifi_ap_channel;
     ap_config.ap.max_connection = cfg->wifi_ap_max_connections;
@@ -905,8 +905,8 @@ esp_err_t wifi_manager_start(void)
     if (strlen(config->wifi_sta_ssid) > 0)
     {
         wifi_config_t wifi_config = { 0 };
-        strncpy((char *)wifi_config.sta.ssid, config->wifi_sta_ssid, sizeof(wifi_config.sta.ssid) - 1);
-        strncpy((char *)wifi_config.sta.password, config->wifi_sta_password, sizeof(wifi_config.sta.password) - 1);
+        strlcpy((char *)wifi_config.sta.ssid, config->wifi_sta_ssid, sizeof(wifi_config.sta.ssid));
+        strlcpy((char *)wifi_config.sta.password, config->wifi_sta_password, sizeof(wifi_config.sta.password));
 
         esp_wifi_set_mode(WIFI_MODE_STA);
         esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
