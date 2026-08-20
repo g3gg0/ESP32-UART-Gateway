@@ -558,6 +558,10 @@ class EspSerial {
                     reserved: view.getUint16(7, true),
                     clock_hz: view.getUint32(9, true)
                 };
+                if (packet.status === 0) {
+                    this._canonEfFlags = packet.config.flags;
+                    this._canonEfIncludeAck = (packet.config.flags & 0x01) !== 0;
+                }
             }
 
             if (this._lensPending && this._lensPending.kind === 'config') {
@@ -954,9 +958,6 @@ class EspSerial {
         payload[5] = (config.flags ?? 0) & 0xFF;
         view.setUint16(6, (config.reserved ?? 0) & 0xFFFF, true);
         view.setUint32(8, (config.clock_hz ?? 500000) >>> 0, true);
-        this._canonEfFlags = payload[5];
-        this._canonEfIncludeAck = (payload[5] & 0x01) !== 0;
-
         const timeoutMs = options.timeoutMs || this._lensDefaultTimeoutMs;
         if (this._lensPending) throw new Error('Canon EF request already pending');
 
@@ -1315,6 +1316,11 @@ window.EspSerial = EspSerial;
         }
 
         .canon-ef-action-grid .btn-secondary.active {
+            border-color: #7897ba;
+            background: #2a3b50;
+        }
+
+        .canon-ef-scan-cycle.active {
             border-color: #7897ba;
             background: #2a3b50;
         }
@@ -2239,6 +2245,9 @@ window.EspSerial = EspSerial;
                                 <div>
                                     <button class="btn-primary" id="canonEfScanBtn" onclick="scanCanonEfCommands()" disabled>Scan</button>
                                 </div>
+                                <div>
+                                    <button class="btn-secondary canon-ef-scan-cycle" id="canonEfScanCycleBtn" onclick="toggleCanonEfScanCycle()" disabled>Cycle</button>
+                                </div>
                             </div>
                             <div class="status-box-lite">Sends each opcode followed by the selected number of <code>0A</code> bytes. The displayed value removes one leading and one trailing <code>AA</code> sync reply when present.</div>
                             <div class="uart-rx-display" id="canonEfScanResult"></div>
@@ -2310,6 +2319,9 @@ window.EspSerial = EspSerial;
         let canonEfApertureCycleActive = false;
         let canonEfApertureCycleTimer = null;
         let canonEfApertureCycleOpenNext = true;
+        let canonEfScanCycleActive = false;
+        let canonEfScanCycleTimer = null;
+        let canonEfAutoConfigTimer = null;
         const canMessageMap = new Map();
 
         const MAX_UART_RX_LINES = 800;
@@ -2805,6 +2817,7 @@ window.EspSerial = EspSerial;
         function setCanonEfView(view) {
             canonEfView = view === 'lens' || view === 'scan' ? view : 'raw';
             if (canonEfView !== 'lens') stopCanonEfCycles();
+            if (canonEfView !== 'scan') stopCanonEfScanCycle();
             const raw = canonEfView === 'raw';
             const lens = canonEfView === 'lens';
             document.getElementById('canonEfRawView')?.style.setProperty('display', raw ? '' : 'none');
@@ -2835,47 +2848,101 @@ window.EspSerial = EspSerial;
             return response;
         }
 
-        async function scanCanonEfCommands() {
-            if (!espSerial || !isDeviceConnected || !canonEfRunning || canonEfLensOperationInFlight) return;
-            const output = document.getElementById('canonEfScanResult');
-            try {
-                const start = parseCanonEfScanByte(document.getElementById('canonEfScanStart').value, 'Start opcode');
-                const end = parseCanonEfScanByte(document.getElementById('canonEfScanEnd').value, 'End opcode');
-                const syncCount = parseInt(document.getElementById('canonEfScanSyncCount').value, 10);
-                if (start > end) throw new Error('Start opcode must not exceed end opcode');
-                if (!Number.isInteger(syncCount) || syncCount < 1 || syncCount > 32) {
-                    throw new Error('Sync byte count must be between 1 and 32');
-                }
+        function getCanonEfScanConfig() {
+            const start = parseCanonEfScanByte(document.getElementById('canonEfScanStart').value, 'Start opcode');
+            const end = parseCanonEfScanByte(document.getElementById('canonEfScanEnd').value, 'End opcode');
+            const syncCount = parseInt(document.getElementById('canonEfScanSyncCount').value, 10);
+            if (start > end) throw new Error('Start opcode must not exceed end opcode');
+            if (!Number.isInteger(syncCount) || syncCount < 1 || syncCount > 32) {
+                throw new Error('Sync byte count must be between 1 and 32');
+            }
+            return { start, end, syncCount };
+        }
 
-                canonEfLensOperationInFlight = true;
-                pauseCanonEfTelemetry();
-                setCanUiState();
-                const lines = [];
-                if (output) output.textContent = 'Scanning...';
-                for (let opcode = start; opcode <= end; opcode++) {
-                    const tx = new Uint8Array(syncCount + 1);
-                    tx[0] = opcode;
-                    tx.fill(0x0A, 1);
-                    const response = await espSerial.canonEFLensTransfer(tx, {
-                        includeAck: document.getElementById('canonEfAckMode')?.value === 'measurement',
-                        timeoutMs: Math.max(5000, tx.length * 100)
-                    });
-                    const rx = canonEfResponseBytes(response);
-                    const commandResponse = trimCanonEfScanSync(rx);
-                    const echoedOnly = commandResponse.length === 1 && commandResponse[0] === opcode;
-                    const value = commandResponse.length && !echoedOnly
-                        ? commandResponse.map(bytesToHex2).join(' ')
-                        : '--';
-                    lines.push(`0x${bytesToHex2(opcode)}${response.status === 0 ? ':' : ` !${bytesToHex2(response.status)}:`} ${value}`);
-                    if (output) output.textContent = lines.join('\n');
+        async function buildCanonEfScanText(config) {
+            const lines = [];
+            for (let opcode = config.start; opcode <= config.end; opcode++) {
+                const tx = new Uint8Array(config.syncCount + 1);
+                tx[0] = opcode;
+                tx.fill(0x0A, 1);
+                const response = await espSerial.canonEFLensTransfer(tx, {
+                    timeoutMs: Math.max(5000, tx.length * 100)
+                });
+                const commandResponse = trimCanonEfScanSync(canonEfResponseBytes(response));
+                const echoedOnly = commandResponse.length === 1 && commandResponse[0] === opcode;
+                const value = commandResponse.length && !echoedOnly
+                    ? commandResponse.map(bytesToHex2).join(' ')
+                    : '--';
+                lines.push(`0x${bytesToHex2(opcode)}${response.status === 0 ? ':' : ` !${bytesToHex2(response.status)}:`} ${value}`);
+            }
+            return lines.join('\n');
+        }
+
+        function commitCanonEfScanText(text) {
+            const output = document.getElementById('canonEfScanResult');
+            if (output && output.textContent !== text) output.textContent = text;
+        }
+
+        async function runCanonEfScanPass(cycleMode) {
+            if (!espSerial || !isDeviceConnected || !canonEfRunning || canonEfLensOperationInFlight) return false;
+            if (!cycleMode) pauseCanonEfTelemetry();
+            canonEfLensOperationInFlight = true;
+            setCanUiState();
+            try {
+                const config = getCanonEfScanConfig();
+                commitCanonEfScanText(await buildCanonEfScanText(config));
+                if (!cycleMode) {
+                    logToConsole(`Canon EF command scan: ${config.end - config.start + 1} opcode(s)`, 'info');
                 }
-                logToConsole(`Canon EF command scan: ${end - start + 1} opcode(s)`, 'info');
+                return true;
             } catch (e) {
                 logToConsole(`Canon EF command scan error: ${e.message}`, 'error');
+                return false;
             } finally {
                 canonEfLensOperationInFlight = false;
-                resumeCanonEfTelemetry();
+                if (!cycleMode) resumeCanonEfTelemetry();
                 setCanUiState();
+            }
+        }
+
+        async function scanCanonEfCommands() {
+            stopCanonEfScanCycle();
+            await runCanonEfScanPass(false);
+        }
+
+        function stopCanonEfScanCycle() {
+            const wasActive = canonEfScanCycleActive;
+            canonEfScanCycleActive = false;
+            if (canonEfScanCycleTimer !== null) clearTimeout(canonEfScanCycleTimer);
+            canonEfScanCycleTimer = null;
+            document.getElementById('canonEfScanCycleBtn')?.classList.remove('active');
+            if (wasActive) resumeCanonEfTelemetry();
+        }
+
+        function toggleCanonEfScanCycle() {
+            if (canonEfScanCycleActive) {
+                stopCanonEfScanCycle();
+                setCanUiState();
+                return;
+            }
+            if (!espSerial || !isDeviceConnected || !canonEfRunning || canonEfLensOperationInFlight) return;
+            canonEfScanCycleActive = true;
+            document.getElementById('canonEfScanCycleBtn')?.classList.add('active');
+            pauseCanonEfTelemetry();
+            runCanonEfScanCyclePass();
+            setCanUiState();
+        }
+
+        async function runCanonEfScanCyclePass() {
+            if (!canonEfScanCycleActive) return;
+            const succeeded = await runCanonEfScanPass(true);
+            if (!succeeded) {
+                stopCanonEfScanCycle();
+                setCanUiState();
+                return;
+            }
+            if (canonEfScanCycleActive) {
+                canonEfScanCycleTimer = setTimeout(runCanonEfScanCyclePass, 0);
             }
         }
 
@@ -3019,13 +3086,17 @@ window.EspSerial = EspSerial;
                     if (record.ack_delay_us === 0 || record.ack_delay_us === 0xFF) {
                         lines.push(`[${index}] TX ${txByte}  NOT ACKNOWLEDGED  RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
                     } else if (record.ack_duration_us === 0xFFFF) {
-                        lines.push(`[${index}] TX ${txByte}  ACK started after ${record.ack_delay_us} us, duration unavailable  RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
+                        lines.push(`[${index}] TX ${txByte}, ACK ${record.ack_delay_us}us, RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
                     } else {
-                        lines.push(`[${index}] TX ${txByte}  ACK delay ${record.ack_delay_us} us, duration ${record.ack_duration_us} us  RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
+                        lines.push(`[${index}] TX ${txByte}, ACK ${record.ack_delay_us}us/${record.ack_duration_us}us, RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
                     }
                 });
+                if (records.length === 0 && response.status !== 0 && sent.length) {
+                    lines.push(`[0] TX ${bytesToHex2(sent[0])}  ATTEMPTED, measurement record missing  <-- stopped`);
+                }
                 if (response.status !== 0) {
-                    for (let index = records.length; index < sent.length; index++) {
+                    const firstNotSent = records.length || (sent.length ? 1 : 0);
+                    for (let index = firstNotSent; index < sent.length; index++) {
                         lines.push(`[${index}] TX ${bytesToHex2(sent[index])}  NOT SENT`);
                     }
                 }
@@ -3047,6 +3118,29 @@ window.EspSerial = EspSerial;
             return lines;
         }
 
+        function describeCanonEfTransferStatus(response) {
+            if (response.status === 0) return 'OK';
+            if (response.status === 0x04) {
+                const record = response.records?.[response.records.length - 1];
+                if (record && record.ack_delay_us > 0 && record.ack_delay_us < 0xFF) {
+                    return `Command failed, Lens started ACK after ${record.ack_delay_us} us but ACK did not complete`;
+                }
+                return 'Command failed, Lens did not acknowledge command byte';
+            }
+            if (response.status === 0x07) {
+                return 'Command failed, Lens held ACK active longer than 3000 us';
+            }
+            const descriptions = {
+                0x01: 'Invalid transfer length',
+                0x02: 'Invalid configuration',
+                0x03: 'Lens bus is not configured',
+                0x05: 'SPI transfer failed',
+                0x06: 'Firmware out of memory',
+                0x7F: 'Internal firmware error'
+            };
+            return descriptions[response.status] || 'Unknown status';
+        }
+
         async function sendCanonEfLensTransaction(commandTx, logLabel = null) {
             const tx = appendCanonEfSyncBytes(commandTx);
             if (logLabel) {
@@ -3062,10 +3156,10 @@ window.EspSerial = EspSerial;
                     response.status === 0 ? 'info' : 'error');
             }
             if (logLabel) renderCanonEfLensResult(logLabel, tx, response);
-            if (response.status === 0x04) {
-                throw new Error('Command failed, Lens did not acknowledge command byte');
+            if (response.status !== 0) {
+                throw new Error(describeCanonEfTransferStatus(response));
             }
-            if (response.status !== 0 || rx.length !== tx.length ||
+            if (rx.length !== tx.length ||
                 !isCanonEfSyncReply(rx[rx.length - 1])) {
                 throw new Error(`Sync reply mismatch: expected AA at final RX byte, got ${rx.map(bytesToHex2).join(' ')}`);
             }
@@ -3408,18 +3502,7 @@ window.EspSerial = EspSerial;
             const output = document.getElementById('canonEfRxDisplay');
             if (!output || !response) return;
 
-            const statusDescriptions = {
-                0x00: 'OK',
-                0x01: 'Invalid transfer length',
-                0x02: 'Invalid configuration',
-                0x03: 'Lens bus is not configured',
-                0x04: 'Command failed, Lens did not acknowledge command byte',
-                0x05: 'SPI transfer failed',
-                0x06: 'Firmware out of memory',
-                0x07: 'ACK too long: LCLK did not release within 3000 us',
-                0x7F: 'Internal firmware error'
-            };
-            let statusText = statusDescriptions[response.status] || 'Unknown status';
+            const statusText = describeCanonEfTransferStatus(response);
             const lines = [`STATUS ${bytesToHex2(response.status)} - ${statusText}`];
             const rxBytes = response.records && response.records.length
                 ? response.records.map(record => record.rx)
@@ -3440,14 +3523,42 @@ window.EspSerial = EspSerial;
             output.scrollTop = output.scrollHeight;
         }
 
-        async function startCanonEf() {
-            if (!espSerial || !isDeviceConnected) return;
-            if (espSerial._lensPending) {
-                logToConsole('Canon EF request still pending; wait for it to finish', 'error');
-                return;
+        async function waitForCanonEfConfigurationIdle(timeoutMs = 10000) {
+            const deadline = Date.now() + timeoutMs;
+            while (canonEfLensOperationInFlight || canonEfFocusPollInFlight || (espSerial && espSerial._lensPending)) {
+                if (Date.now() >= deadline) throw new Error('Canon EF controls did not become idle');
+                await new Promise(resolve => setTimeout(resolve, 10));
             }
+        }
 
+        function scheduleCanonEfAutoConfigure(delayMs = 0) {
+            if (canonEfAutoConfigTimer !== null) clearTimeout(canonEfAutoConfigTimer);
+            canonEfAutoConfigTimer = setTimeout(async () => {
+                canonEfAutoConfigTimer = null;
+                if (!espSerial || !isDeviceConnected) return;
+                await startCanonEf(true);
+            }, delayMs);
+        }
+
+        function initializeCanonEfAutoConfigure() {
+            const immediateIds = [
+                'canonEfDcl', 'canonEfDlc', 'canonEfLclkOut', 'canonEfLclkIn',
+                'canonEfInvertDcl', 'canonEfInvertDlc', 'canonEfInvertLclkOut',
+                'canonEfInvertLclkIn', 'canonEfAckMode'
+            ];
+            immediateIds.forEach(id => {
+                document.getElementById(id)?.addEventListener('change', () => scheduleCanonEfAutoConfigure(0));
+            });
+            document.getElementById('canonEfClock')?.addEventListener('input', () => scheduleCanonEfAutoConfigure(400));
+        }
+
+        async function startCanonEf(automatic = false) {
+            if (!espSerial || !isDeviceConnected) return;
+
+            stopCanonEfCycles();
+            pauseCanonEfTelemetry();
             try {
+                await waitForCanonEfConfigurationIdle();
                 const clockHz = parseHexOrDec(document.getElementById('canonEfClock').value);
                 const config = {
                     dcl_gpio: parseInt(document.getElementById('canonEfDcl').value, 10),
@@ -3484,11 +3595,12 @@ window.EspSerial = EspSerial;
                 if (tablePanel) tablePanel.textContent = 'Parameter tables: -';
                 updateCanonEfFocusPolling();
                 setCanUiState();
-                logToConsole('Canon EF bus configured', 'info');
+                logToConsole(`Canon EF bus configured${automatic ? ' (settings applied)' : ''}`, 'info');
             } catch (e) {
                 canonEfRunning = false;
                 logToConsole(`Canon EF configure error: ${e.message}`, 'error');
             } finally {
+                resumeCanonEfTelemetry();
                 setCanUiState();
             }
         }
@@ -3902,6 +4014,7 @@ window.EspSerial = EspSerial;
             const canonEfInitializeBtn = document.getElementById('canonEfInitializeBtn');
             const canonEfInfoBtn = document.getElementById('canonEfInfoBtn');
             const canonEfScanBtn = document.getElementById('canonEfScanBtn');
+            const canonEfScanCycleBtn = document.getElementById('canonEfScanCycleBtn');
             const canonEfFocusNearBtn = document.getElementById('canonEfFocusNearBtn');
             const canonEfFocusMinusBtn = document.getElementById('canonEfFocusMinusBtn');
             const canonEfFocusPlusBtn = document.getElementById('canonEfFocusPlusBtn');
@@ -3941,7 +4054,12 @@ window.EspSerial = EspSerial;
             if (canonEfSendBtn) canonEfSendBtn.disabled = !uartEnabled || !canonEfRunning || canonEfBusy;
             if (canonEfResetBtn) canonEfResetBtn.disabled = !uartEnabled || !canonEfRunning || canonEfBusy;
             if (canonEfInitializeBtn) canonEfInitializeBtn.disabled = !uartEnabled || !canonEfRunning || canonEfBusy || canonEfLensOperationInFlight;
-            if (canonEfScanBtn) canonEfScanBtn.disabled = !uartEnabled || !canonEfRunning || canonEfBusy || canonEfLensOperationInFlight;
+            if (canonEfScanBtn) canonEfScanBtn.disabled = !uartEnabled || !canonEfRunning || canonEfBusy || canonEfLensOperationInFlight || canonEfScanCycleActive;
+            if (canonEfScanCycleBtn) {
+                canonEfScanCycleBtn.disabled = !uartEnabled || !canonEfRunning || (canonEfLensOperationInFlight && !canonEfScanCycleActive);
+                canonEfScanCycleBtn.classList.toggle('active', canonEfScanCycleActive);
+                canonEfScanCycleBtn.textContent = canonEfScanCycleActive ? 'Stop cycle' : 'Cycle';
+            }
             const lensControlsEnabled = uartEnabled && canonEfRunning && canonEfInitialized && !canonEfBusy && !canonEfLensOperationInFlight;
             if (canonEfInfoBtn) canonEfInfoBtn.disabled = !lensControlsEnabled;
             if (canonEfFocusNearBtn) canonEfFocusNearBtn.disabled = !lensControlsEnabled;
@@ -3955,6 +4073,7 @@ window.EspSerial = EspSerial;
             if (canonEfApertureCloseBtn) canonEfApertureCloseBtn.disabled = !lensControlsEnabled;
             if (canonEfApertureCycleBtn) canonEfApertureCycleBtn.disabled = !lensControlsEnabled;
             if (!uartEnabled || !canonEfRunning || !canonEfInitialized || canonEfView !== 'lens') stopCanonEfCycles();
+            if (!uartEnabled || !canonEfRunning || canonEfView !== 'scan') stopCanonEfScanCycle();
 
             updateCanonEfFocusPolling();
 
@@ -7254,6 +7373,7 @@ window.EspSerial = EspSerial;
             /* Initialize GPIO checkboxes */
             initializeGpioCheckboxes();
             buildUartGpioSelects();
+            initializeCanonEfAutoConfigure();
 
             updateProtocolVisibility();
             setCanUiState();
