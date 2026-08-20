@@ -17,13 +17,20 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#define CANONEF_RMT_RESOLUTION_HZ 5000000U
-#define CANONEF_CLOCK_MIN_HZ 10000U
-#define CANONEF_CLOCK_MAX_HZ 500000U
-#define CANONEF_RX_IDLE_NS_ACK_START 50000U
-#define CANONEF_RX_IDLE_NS_ACK_DURATION 3000000U
+#define US *1000
+#define MS *1000 * 1000
+#define KHZ *1000
+#define MHZ *1000 * 1000
+
+#define CANONEF_CLOCK_MIN_HZ (10 KHZ)
+#define CANONEF_CLOCK_MAX_HZ (500 KHZ)
+#define CANONEF_RMT_RESOLUTION_HZ (5 MHZ)
+#define CANONEF_RX_IDLE_NS_ACK_START (100 US)
+#define CANONEF_RX_IDLE_NS_ACK_DURATION ((uint32_t)(((uint64_t)0x7FFEU * 1000000000ULL) / CANONEF_RMT_RESOLUTION_HZ))
+#define CANONEF_ACK_RELEASE_TIMEOUT_US 400000U
+
 #define CANONEF_RX_GLITCH_NS 100U
-#define CANONEF_TRANSFER_TIMEOUT_MS 20U
+#define CANONEF_TRANSFER_TIMEOUT_MS (CANONEF_RX_IDLE_NS_ACK_DURATION / 1000000U + 100U)
 #define CANONEF_RMT_SYMBOLS 48U
 #define CANONEF_CLOCK_PULSES_PER_BYTE 8U
 #define CANONEF_ACK_START_TIMEOUT_US 50U
@@ -48,9 +55,9 @@ typedef struct
 
 static canonef_context_t canonef;
 
-static bool IRAM_ATTR canonef_lclk_rx_done(rmt_channel_handle_t channel,
-                                           const rmt_rx_done_event_data_t *event_data,
-                                           void *user_data)
+static bool IRAM_ATTR canonef_rmt_rx_done(rmt_channel_handle_t channel,
+                                          const rmt_rx_done_event_data_t *event_data,
+                                          void *user_data)
 {
     (void)channel;
     canonef_context_t *context = (canonef_context_t *)user_data;
@@ -215,6 +222,22 @@ static esp_err_t canonef_start_session(const canonef_config_packet_t *config)
     esp_err_t error;
 
     /* RMT init */
+    gpio_config_t lclk_input_config = {
+        .pin_bit_mask = 1ULL << config->lclk_in_gpio,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+
+    error = gpio_config(&lclk_input_config);
+    if (error != ESP_OK)
+    {
+        send_message("Canon EF LCLK input setup failed: %s", esp_err_to_name(error));
+        canonef_stop_session();
+        return error;
+    }
+
     rmt_rx_channel_config_t lclk_rx_config = {
         .gpio_num = (gpio_num_t)config->lclk_in_gpio,
         .clk_src = RMT_CLK_SRC_DEFAULT,
@@ -231,7 +254,7 @@ static esp_err_t canonef_start_session(const canonef_config_packet_t *config)
     }
 
     rmt_rx_event_callbacks_t rx_callbacks = {
-        .on_recv_done = canonef_lclk_rx_done,
+        .on_recv_done = canonef_rmt_rx_done,
     };
     error = rmt_rx_register_event_callbacks(canonef.rmt_rx_channel, &rx_callbacks, &canonef);
     if (error == ESP_OK)
@@ -298,33 +321,40 @@ static esp_err_t canonef_start_session(const canonef_config_packet_t *config)
 
     canonef.active = true;
     send_message("Canon EF: Initialized");
+    send_message("Canon EF: GPIOs DCL=%u DLC=%u LCLKout=%u LCLKin=%u", config->dcl_gpio, config->dlc_gpio, config->lclk_out_gpio, config->lclk_in_gpio);
+    send_message("Canon EF: inversion=0x%02X flags=0x%02X", config->inversion_mask, config->flags);
+    send_message("Canon EF: clock=%lu Hz", config->clock_hz);
 
     return ESP_OK;
 }
 
 static bool canonef_find_ack_duration(uint8_t *ack_delay_us, uint16_t *ack_duration_us)
 {
-    const volatile rmt_symbol_word_t *symbol_before = &canonef.lclk_symbols[7];
-    const volatile rmt_symbol_word_t *symbol_after = &canonef.lclk_symbols[8];
-    uint32_t ack_delay = symbol_before->duration1;
-    uint32_t ack_duration = symbol_after->duration0;
+    /* the ack pulse is the ninth pulse */
+    uint32_t ack_delay = canonef.lclk_symbols[7].duration1;
+    uint32_t ack_duration = canonef.lclk_symbols[8].duration0;
 
     *ack_delay_us = 0;
-    *ack_duration_us = 0;
+    *ack_duration_us = 0xFFFF; /* signal beyond limits */
 
-    /* if the ack came, the inactive phase of the clock (high) will have some duration, we call that ack delay, the
-    time it took until the ack came */
-    if (ack_duration > 0)
+    /* if no ack found, nothing to measure */
+    if (ack_delay == 0)
     {
-        uint32_t delay_us = (ack_delay * 1000000U + CANONEF_RMT_RESOLUTION_HZ - 1U) / CANONEF_RMT_RESOLUTION_HZ;
-        *ack_delay_us = (delay_us > UINT8_MAX) ? UINT8_MAX : (uint8_t)delay_us;
-
-        uint32_t duration_us = (ack_duration * 1000000U + CANONEF_RMT_RESOLUTION_HZ - 1U) / CANONEF_RMT_RESOLUTION_HZ;
-        *ack_duration_us = (duration_us > UINT16_MAX) ? UINT16_MAX : (uint16_t)duration_us;
-        return true;
+        return false;
     }
 
-    return false;
+    uint32_t delay_us = (ack_delay * 1000000U + CANONEF_RMT_RESOLUTION_HZ - 1U) / CANONEF_RMT_RESOLUTION_HZ;
+    *ack_delay_us = (delay_us > UINT8_MAX) ? UINT8_MAX : (uint8_t)delay_us;
+
+    /* if available calculate duration */
+    if (ack_duration > 0)
+    {
+        uint32_t duration_us = (ack_duration * 1000000U + CANONEF_RMT_RESOLUTION_HZ - 1U) / CANONEF_RMT_RESOLUTION_HZ;
+        *ack_duration_us = (duration_us > UINT16_MAX) ? UINT16_MAX : (uint16_t)duration_us;
+    }
+
+    /* if any of them was found, all is fine */
+    return true;
 }
 
 static esp_err_t canonef_reset_rmt(void)
@@ -348,6 +378,12 @@ static esp_err_t canonef_reset_rmt(void)
     return error;
 }
 
+static bool canonef_lclk_active()
+{
+    bool lclk_in_inv = (canonef.config.inversion_mask & CANONEF_INVERT_LCLK_IN) != 0;
+    return gpio_get_level((gpio_num_t)canonef.config.lclk_in_gpio) == (lclk_in_inv ? 1 : 0);
+}
+
 static esp_err_t canonef_transfer_byte(uint8_t tx_byte, uint8_t *rx_byte, uint8_t *ack_delay_us, uint16_t *ack_duration_us)
 {
     uint8_t spi_tx = tx_byte;
@@ -362,6 +398,12 @@ static esp_err_t canonef_transfer_byte(uint8_t tx_byte, uint8_t *rx_byte, uint8_
     bool lclk_in_inv = (canonef.config.inversion_mask & CANONEF_INVERT_LCLK_IN) != 0;
     esp_err_t error = ESP_OK;
 
+    if (canonef_lclk_active())
+    {
+        send_message("Canon EF lens: LCLK was active before transfer");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     /* take it if we can */
     xSemaphoreTake(canonef.rx_done, 0);
 
@@ -374,16 +416,16 @@ static esp_err_t canonef_transfer_byte(uint8_t tx_byte, uint8_t *rx_byte, uint8_
         In normal mode so just wait for ACK to be seen which should happen after 14µs.
         In measurement mode we wait for up to 3ms. This means in measurement mode EVERY byte will take 3ms, even if the ACK was only 14µs long.
         We need to wait for the full duration to measure it.
+
+        update: will use a rather short timeout and measure the release time in software if the ACK is still held active after the RMT finished. This is inaccurate but better than nothing.
      */
     rmt_receive_config_t receive_config = {
         .signal_range_min_ns = CANONEF_RX_GLITCH_NS,
         .signal_range_max_ns = capture_ack ? CANONEF_RX_IDLE_NS_ACK_DURATION : CANONEF_RX_IDLE_NS_ACK_START,
     };
 
-    /* first reset RMT */
-    canonef_reset_rmt();
-
     memset(canonef.lclk_symbols, 0, sizeof(canonef.lclk_symbols));
+
     error = rmt_receive(canonef.rmt_rx_channel, canonef.lclk_symbols, sizeof(canonef.lclk_symbols), &receive_config);
     if (error == ESP_ERR_INVALID_STATE)
     {
@@ -404,37 +446,40 @@ static esp_err_t canonef_transfer_byte(uint8_t tx_byte, uint8_t *rx_byte, uint8_
 
     *rx_byte = spi_rx;
 
-    if (xSemaphoreTake(canonef.rx_done, pdMS_TO_TICKS(CANONEF_TRANSFER_TIMEOUT_MS)) != pdTRUE)
+    uint32_t receive_timeout_ms = (receive_config.signal_range_max_ns + 999999U) / 1000000U + 20U;
+    if (xSemaphoreTake(canonef.rx_done, pdMS_TO_TICKS(receive_timeout_ms)) != pdTRUE)
     {
         send_message("Canon EF lens: Unexpected RMT Timeout after SPI transfer");
         canonef_reset_rmt();
         return ESP_ERR_TIMEOUT;
     }
+    int64_t tx_done_time = esp_timer_get_time();
 
-    /* wait until the LCLK line is high again, otherwise we might have a glitch on the next transfer */
-    int64_t start_time = esp_timer_get_time();
-    while (gpio_get_level((gpio_num_t)canonef.config.lclk_in_gpio) == (lclk_in_inv ? 1 : 0))
-    {
-        if (esp_timer_get_time() > (CANONEF_RX_IDLE_NS_ACK_DURATION / 1000) + start_time)
-        {
-            /* if the LCLK line is still low after the maximum time we expect it to be high, something is wrong */
-            send_message("Canon EF lens: LCLK line did not go high after SPI transfer");
-            canonef_reset_rmt();
-            return ESP_ERR_INVALID_STATE;
-        }
-    }
-
-    /* depending on the mode we might find the full ack or just the delay until it came */
+    /* Depending on the mode this is either the exact ACK or just its arrival pulse. */
     if (!canonef_find_ack_duration(ack_delay_us, ack_duration_us))
     {
         send_message("Canon EF lens: ACK: ack_delay_us=%u us, ack_duration_us=%u us", *ack_delay_us, *ack_duration_us);
         return ESP_ERR_NOT_FOUND;
     }
-    if (capture_ack && *ack_duration_us == UINT16_MAX)
-    {
-        return ESP_ERR_INVALID_STATE;
-    }
 
+    /* if ACK is still held low, wait and measure per software */
+    if (canonef_lclk_active())
+    {
+        /* RMT finished while ACK still being held, measure the release time using timer (inaccurate) */
+        while (canonef_lclk_active())
+        {
+            if (esp_timer_get_time() >= tx_done_time + CANONEF_ACK_RELEASE_TIMEOUT_US)
+            {
+                send_message("Canon EF lens: LCLK remained active for more than %u us", CANONEF_ACK_RELEASE_TIMEOUT_US);
+                return ESP_ERR_INVALID_STATE;
+            }
+            esp_rom_delay_us(10);
+        }
+
+        /* in case it wasnt measured, overwrite it */
+        *ack_duration_us = (uint16_t)(esp_timer_get_time() - tx_done_time) + (CANONEF_RX_IDLE_NS_ACK_DURATION / 1000);
+        return ESP_OK;
+    }
     return ESP_OK;
 }
 
@@ -449,21 +494,23 @@ esp_err_t canonef_handle_config_packet(const uint8_t *payload, size_t payload_le
     canonef_config_packet_t config;
     memcpy(&config, payload, sizeof(config));
     esp_err_t error = canonef_start_session(&config);
-    if (error == ESP_OK)
+
+    switch (error)
     {
-        return canonef_queue_config_response(CANONEF_STATUS_OK, &canonef.config);
+    case ESP_OK:
+        canonef_queue_config_response(CANONEF_STATUS_OK, &canonef.config);
+        break;
+    case ESP_ERR_INVALID_ARG:
+        canonef_queue_config_response(CANONEF_STATUS_INVALID_ARG, &config);
+        break;
+    case ESP_ERR_NO_MEM:
+        canonef_queue_config_response(CANONEF_STATUS_NO_MEMORY, &config);
+        break;
+    default:
+        canonef_queue_config_response(CANONEF_STATUS_INTERNAL, &config);
+        break;
     }
 
-    canonef_status_t status = CANONEF_STATUS_INTERNAL;
-    if (error == ESP_ERR_INVALID_ARG)
-    {
-        status = CANONEF_STATUS_INVALID_ARG;
-    }
-    else if (error == ESP_ERR_NO_MEM)
-    {
-        status = CANONEF_STATUS_NO_MEMORY;
-    }
-    (void)canonef_queue_config_response(status, &config);
     return error;
 }
 
@@ -527,8 +574,23 @@ esp_err_t canonef_handle_xfer_packet(const uint8_t *payload, size_t payload_len)
             }
             else
             {
-                response[0] = (error == ESP_ERR_NOT_FOUND || error == ESP_ERR_TIMEOUT) ? CANONEF_STATUS_ACK_TIMEOUT
-                                                                                       : (error == ESP_ERR_INVALID_STATE ? CANONEF_STATUS_ACK_TOO_LONG : CANONEF_STATUS_TRANSFER_FAILED);
+                switch (error)
+                {
+                case ESP_ERR_NOT_FOUND:
+                case ESP_ERR_TIMEOUT:
+                    send_message("Canon EF lens: ACK timeout after byte %zu, ack_delay_us=%u us, ack_duration_us=%u us", byte_index, ack_delay_us, ack_duration_us);
+                    response[0] = CANONEF_STATUS_ACK_TIMEOUT;
+                    break;
+                case ESP_ERR_INVALID_STATE:
+                    send_message("Canon EF lens: ACK too long after byte %zu, ack_delay_us=%u us, ack_duration_us=%u us", byte_index, ack_delay_us, ack_duration_us);
+                    response[0] = CANONEF_STATUS_ACK_TOO_LONG;
+                    break;
+                default:
+                    send_message("Canon EF lens: Transfer failed after byte %zu, ack_delay_us=%u us, ack_duration_us=%u us, error=%s", byte_index, ack_delay_us, ack_duration_us, esp_err_to_name(error));
+                    response[0] = CANONEF_STATUS_TRANSFER_FAILED;
+                    break;
+                }
+
                 result = error;
                 stop_after_record = true;
             }
@@ -576,8 +638,6 @@ esp_err_t canonef_handle_reset_packet(const uint8_t *payload, size_t payload_len
     }
 
     const uint8_t lclk_gpio = canonef.config.lclk_out_gpio;
-    const bool inverted = (canonef.config.inversion_mask & CANONEF_INVERT_LCLK_OUT) != 0;
-
 
     gpio_set_direction((gpio_num_t)lclk_gpio, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)lclk_gpio, 0);
