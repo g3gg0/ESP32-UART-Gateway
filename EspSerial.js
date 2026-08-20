@@ -37,6 +37,7 @@ class EspSerial {
         this._lensPending = null;
         this._lensDefaultTimeoutMs = 5000;
         this._canonEfIncludeAck = false;
+        this._canonEfFlags = 0;
 
         /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
         this.EXTMODE_MAGIC = new Uint8Array([
@@ -548,6 +549,10 @@ class EspSerial {
                     reserved: view.getUint16(7, true),
                     clock_hz: view.getUint32(9, true)
                 };
+                if (packet.status === 0) {
+                    this._canonEfFlags = packet.config.flags;
+                    this._canonEfIncludeAck = (packet.config.flags & 0x01) !== 0;
+                }
             }
 
             if (this._lensPending && this._lensPending.kind === 'config') {
@@ -570,18 +575,21 @@ class EspSerial {
                 status: payload[0] >>> 0,
                 data,
                 records: [],
+                measurement: includeAck,
+                ignore_ack: !!(pending && pending.ignoreAck),
+                malformed_measurement: false,
                 raw: payload
             };
 
-            if (includeAck && data.length % 3 === 0) {
-                for (let offset = 0; offset < data.length; offset += 3) {
+            if (includeAck) {
+                packet.malformed_measurement = (data.length % 4) !== 0;
+                for (let offset = 0; offset + 3 < data.length; offset += 4) {
                     packet.records.push({
-                        ack_us: (data[offset] | (data[offset + 1] << 8)) >>> 0,
-                        rx: data[offset + 2] >>> 0
+                        ack_delay_us: (data[offset]) >>> 0,
+                        ack_duration_us: (data[offset + 1] | (data[offset + 2] << 8)) >>> 0,
+                        rx: data[offset + 3] >>> 0
                     });
                 }
-            } else {
-                packet.records = Array.from(data, (value) => ({ rx: value >>> 0 }));
             }
 
             if (pending && pending.kind === 'xfer') {
@@ -941,8 +949,6 @@ class EspSerial {
         payload[5] = (config.flags ?? 0) & 0xFF;
         view.setUint16(6, (config.reserved ?? 0) & 0xFFFF, true);
         view.setUint32(8, (config.clock_hz ?? 500000) >>> 0, true);
-        this._canonEfIncludeAck = (payload[5] & 0x01) !== 0;
-
         const timeoutMs = options.timeoutMs || this._lensDefaultTimeoutMs;
         if (this._lensPending) throw new Error('Canon EF request already pending');
 
@@ -971,9 +977,9 @@ class EspSerial {
         if (tx.length > 4096) throw new Error('Canon EF transfer is limited to 4096 bytes');
         if (this._lensPending) throw new Error('Canon EF request already pending');
 
-        const includeAck = options.includeAck !== undefined
-            ? !!options.includeAck
-            : !!this._canonEfIncludeAck;
+        /* Response layout is fixed by the last firmware configuration packet. */
+        const includeAck = !!this._canonEfIncludeAck;
+        const ignoreAck = (this._canonEfFlags & 0x02) !== 0;
         const timeoutMs = options.timeoutMs || this._lensDefaultTimeoutMs;
         const packet = this.buildPacket(tx, this.UART_PACKET_TYPE_LENS_XFER);
 
@@ -982,7 +988,7 @@ class EspSerial {
                 this._lensPending = null;
                 reject(new Error('Canon EF transfer timeout'));
             }, timeoutMs);
-            this._lensPending = { kind: 'xfer', includeAck, resolve, reject, timer };
+            this._lensPending = { kind: 'xfer', includeAck, ignoreAck, resolve, reject, timer };
 
             try {
                 await this.sendPacket(packet, `Canon EF transfer (${tx.length} bytes)`);

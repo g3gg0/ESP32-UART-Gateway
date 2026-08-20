@@ -46,6 +46,7 @@ class EspSerial {
         this._lensPending = null;
         this._lensDefaultTimeoutMs = 5000;
         this._canonEfIncludeAck = false;
+        this._canonEfFlags = 0;
 
         /* Extended mode activation magic: type 0x000A packet with 8-byte payload */
         this.EXTMODE_MAGIC = new Uint8Array([
@@ -579,18 +580,21 @@ class EspSerial {
                 status: payload[0] >>> 0,
                 data,
                 records: [],
+                measurement: includeAck,
+                ignore_ack: !!(pending && pending.ignoreAck),
+                malformed_measurement: false,
                 raw: payload
             };
 
-            if (includeAck && data.length % 3 === 0) {
-                for (let offset = 0; offset < data.length; offset += 3) {
+            if (includeAck) {
+                packet.malformed_measurement = (data.length % 4) !== 0;
+                for (let offset = 0; offset + 3 < data.length; offset += 4) {
                     packet.records.push({
-                        ack_us: (data[offset] | (data[offset + 1] << 8)) >>> 0,
-                        rx: data[offset + 2] >>> 0
+                        ack_delay_us: (data[offset]) >>> 0,
+                        ack_duration_us: (data[offset + 1] | (data[offset + 2] << 8)) >>> 0,
+                        rx: data[offset + 3] >>> 0
                     });
                 }
-            } else {
-                packet.records = Array.from(data, (value) => ({ rx: value >>> 0 }));
             }
 
             if (pending && pending.kind === 'xfer') {
@@ -950,6 +954,7 @@ class EspSerial {
         payload[5] = (config.flags ?? 0) & 0xFF;
         view.setUint16(6, (config.reserved ?? 0) & 0xFFFF, true);
         view.setUint32(8, (config.clock_hz ?? 500000) >>> 0, true);
+        this._canonEfFlags = payload[5];
         this._canonEfIncludeAck = (payload[5] & 0x01) !== 0;
 
         const timeoutMs = options.timeoutMs || this._lensDefaultTimeoutMs;
@@ -980,9 +985,9 @@ class EspSerial {
         if (tx.length > 4096) throw new Error('Canon EF transfer is limited to 4096 bytes');
         if (this._lensPending) throw new Error('Canon EF request already pending');
 
-        const includeAck = options.includeAck !== undefined
-            ? !!options.includeAck
-            : !!this._canonEfIncludeAck;
+        /* Response layout is fixed by the last firmware configuration packet. */
+        const includeAck = !!this._canonEfIncludeAck;
+        const ignoreAck = (this._canonEfFlags & 0x02) !== 0;
         const timeoutMs = options.timeoutMs || this._lensDefaultTimeoutMs;
         const packet = this.buildPacket(tx, this.UART_PACKET_TYPE_LENS_XFER);
 
@@ -991,7 +996,7 @@ class EspSerial {
                 this._lensPending = null;
                 reject(new Error('Canon EF transfer timeout'));
             }, timeoutMs);
-            this._lensPending = { kind: 'xfer', includeAck, resolve, reject, timer };
+            this._lensPending = { kind: 'xfer', includeAck, ignoreAck, resolve, reject, timer };
 
             try {
                 await this.sendPacket(packet, `Canon EF transfer (${tx.length} bytes)`);
@@ -3003,15 +3008,20 @@ window.EspSerial = EspSerial;
             const records = response.records || [];
             const lines = [];
 
-            if (records.length) {
+            if (response.measurement) {
+                if (response.malformed_measurement) {
+                    lines.push(`Malformed measurement payload (${response.data.length} data bytes)`);
+                }
                 records.forEach((record, index) => {
                     const txByte = index < sent.length ? bytesToHex2(sent[index]) : '--';
                     const rxByte = bytesToHex2(record.rx);
-                    if (record.ack_us === 0xFFFF) {
-                        const stopped = response.status !== 0 && index === records.length - 1;
+                    const stopped = response.status !== 0 && index === records.length - 1;
+                    if (record.ack_delay_us === 0 || record.ack_delay_us === 0xFF) {
                         lines.push(`[${index}] TX ${txByte}  NOT ACKNOWLEDGED  RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
+                    } else if (record.ack_duration_us === 0xFFFF) {
+                        lines.push(`[${index}] TX ${txByte}  ACK started after ${record.ack_delay_us} us, duration unavailable  RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
                     } else {
-                        lines.push(`[${index}] TX ${txByte}  ACK ${record.ack_us} us  RX ${rxByte}`);
+                        lines.push(`[${index}] TX ${txByte}  ACK delay ${record.ack_delay_us} us, duration ${record.ack_duration_us} us  RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
                     }
                 });
                 if (response.status !== 0) {
@@ -3020,8 +3030,19 @@ window.EspSerial = EspSerial;
                     }
                 }
             } else {
-                lines.push(`TX ${sent.map(bytesToHex2).join(' ')}`);
-                lines.push('ACK detail unavailable (enable Measurement mode)');
+                const received = Array.from(response.data || []);
+                received.forEach((rx, index) => {
+                    const stopped = response.status !== 0 && index === received.length - 1;
+                    const ackText = response.ignore_ack
+                        ? 'ACK ignored (not measured)'
+                        : stopped ? 'NOT ACKNOWLEDGED' : 'ACKNOWLEDGED (timing not measured)';
+                    lines.push(`[${index}] TX ${bytesToHex2(sent[index])}  ${ackText}  RX ${bytesToHex2(rx)}${stopped ? '  <-- stopped' : ''}`);
+                });
+                if (response.status !== 0) {
+                    for (let index = received.length; index < sent.length; index++) {
+                        lines.push(`[${index}] TX ${bytesToHex2(sent[index])}  NOT SENT`);
+                    }
+                }
             }
             return lines;
         }
