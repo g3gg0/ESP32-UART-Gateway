@@ -1105,6 +1105,15 @@
                                     </div>
                                 </div>
                             </div>
+                            <div>
+                                <div>
+                                    <label>IS control</label>
+                                    <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px;">
+                                        <button class="btn-secondary" id="canonEfIsEnableBtn" onclick="setCanonEfIsRequested(true)" disabled>Enable</button>
+                                        <button class="btn-secondary" id="canonEfIsDisableBtn" onclick="setCanonEfIsRequested(false)" disabled>Disable</button>
+                                    </div>
+                                </div>
+                            </div>
                             <div class="uart-rx-display" id="canonEfLensResult"></div>
                             <div class="uart-rx-display" id="canonEfTableDump"></div>
                         </div>
@@ -1212,6 +1221,7 @@
         let canonEfLensOperationInFlight = false;
         let canonEfTelemetryPauseDepth = 0;
         let canonEfApertureRelativeSteps = null;
+        let canonEfIsRequested = false;
         let canonEfFocusCycleActive = false;
         let canonEfFocusCycleTimer = null;
         let canonEfFocusCycleNearNext = true;
@@ -1954,7 +1964,9 @@
                     setCanonEfLensField('canonEfStatus', formatCanonEfStatus(statusRx[2]));
                 }
 
-                const extendedStatusResponse = await sendCanonEfLensTransaction(new Uint8Array([0x91, 0xB9, 0x00, 0x00]));
+                const isParameter = canonEfIsRequested ? (0xB9 | 0x20) : (0xB9 & ~0x20);
+                const extendedStatusResponse = await sendCanonEfLensTransaction(
+                    new Uint8Array([0x91, isParameter, 0x00, 0x00]));
                 const extendedStatusRx = canonEfResponseBytes(extendedStatusResponse);
                 if (extendedStatusRx.length >= 6) {
                     const isStatus = extendedStatusRx[3];
@@ -2260,6 +2272,18 @@
             catch (e) { logToConsole(`Canon EF focus-infinity error: ${e.message}`, 'error'); }
         }
 
+        async function setCanonEfIsRequested(enabled) {
+            try {
+                const parameter = enabled ? (0xB9 | 0x20) : (0xB9 & ~0x20);
+                await runCanonEfLensCommand(enabled ? 'Request IS' : 'Stop IS',
+                    new Uint8Array([0x91, parameter, 0x00, 0x00]));
+                canonEfIsRequested = enabled;
+                logToConsole(`Canon EF IS request ${enabled ? 'enabled' : 'disabled'}`, 'info');
+            } catch (e) {
+                logToConsole(`Canon EF IS request error: ${e.message}`, 'error');
+            }
+        }
+
         function stopCanonEfCycles() {
             canonEfFocusCycleActive = false;
             canonEfApertureCycleActive = false;
@@ -2542,6 +2566,7 @@
                 }
                 canonEfRunning = true;
                 canonEfInitialized = false;
+                canonEfIsRequested = false;
                 setCanonEfLensField('canonEfLensType', '-');
                 setCanonEfLensField('canonEfLensFocalLength', '-');
                 setCanonEfLensField('canonEfLensName', '-');
@@ -2985,6 +3010,9 @@
             const canonEfAperturePlusBtn = document.getElementById('canonEfAperturePlusBtn');
             const canonEfApertureCloseBtn = document.getElementById('canonEfApertureCloseBtn');
             const canonEfApertureCycleBtn = document.getElementById('canonEfApertureCycleBtn');
+            const canonEfIsConfigureBtn = document.getElementById('canonEfIsConfigureBtn');
+            const canonEfIsEnableBtn = document.getElementById('canonEfIsEnableBtn');
+            const canonEfIsDisableBtn = document.getElementById('canonEfIsDisableBtn');
 
             const uartEnabled = !!isDeviceConnected;
 
@@ -3032,6 +3060,9 @@
             if (canonEfAperturePlusBtn) canonEfAperturePlusBtn.disabled = !lensControlsEnabled;
             if (canonEfApertureCloseBtn) canonEfApertureCloseBtn.disabled = !lensControlsEnabled;
             if (canonEfApertureCycleBtn) canonEfApertureCycleBtn.disabled = !lensControlsEnabled;
+            if (canonEfIsConfigureBtn) canonEfIsConfigureBtn.disabled = !lensControlsEnabled;
+            if (canonEfIsEnableBtn) canonEfIsEnableBtn.disabled = !lensControlsEnabled;
+            if (canonEfIsDisableBtn) canonEfIsDisableBtn.disabled = !lensControlsEnabled;
             if (!uartEnabled || !canonEfRunning || !canonEfInitialized || canonEfView !== 'lens') stopCanonEfCycles();
             if (!uartEnabled || !canonEfRunning || canonEfView !== 'scan') stopCanonEfScanCycle();
 
