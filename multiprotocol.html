@@ -28,7 +28,7 @@
         }
 
         .container {
-            max-width: 1000px;
+            max-width: 1500px;
             width: 100%;
             background: #121923;
             border-radius: 10px;
@@ -1073,7 +1073,7 @@
                     </div>
 
                     <div id="canonEfLensView" style="display:none;">
-                        <div style="display:grid; grid-template-columns:minmax(0, 1fr) minmax(220px, 300px); gap:16px; align-items:start;">
+                        <div style="display:grid; grid-template-columns:minmax(0, 1fr) minmax(220px, 400px); gap:16px; align-items:start;">
                         <div style="display:flex; flex-direction:column; gap:12px;">
                             <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
                                 <button class="btn-primary" id="canonEfInitializeBtn" onclick="initializeCanonEfLens()" disabled>Initialize</button>
@@ -1113,9 +1113,11 @@
                             <span style="color:#9aa8b7; font-weight:700;">Lens Type</span><span id="canonEfLensType">-</span>
                             <span style="color:#9aa8b7; font-weight:700;">Focal Length</span><span id="canonEfLensFocalLength">-</span>
                             <span style="color:#9aa8b7; font-weight:700;">Lens Name</span><span id="canonEfLensName">-</span>
+                            <span style="color:#9aa8b7; font-weight:700;">Serial Number</span><span id="canonEfLensSerial">-</span>
                             <span style="color:#9aa8b7; font-weight:700;">Focus Position</span><span id="canonEfFocusPosition">-</span>
                                 <span style="color:#9aa8b7; font-weight:700;">Zoom</span><span id="canonEfZoom">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Focus Status</span><span id="canonEfFocusStatus">-</span>
+                            <span style="color:#9aa8b7; font-weight:700;">Status</span><span id="canonEfStatus" style="white-space:pre;">-</span>
+                            <span style="color:#9aa8b7; font-weight:700;">IS Status</span><span id="canonEfIsStatus" style="white-space:pre;">-</span>
                             <span style="color:#9aa8b7; font-weight:700;">Focus Distance</span><span id="canonEfFocusDistance">-</span>
                             <span style="color:#9aa8b7; font-weight:700;">Aperture</span><span id="canonEfAperture">-</span>
                         </div>
@@ -1872,12 +1874,32 @@
         function formatCanonEfStatus(status) {
             const bitPattern = Array.from({ length: 8 }, (_, index) =>
                 (status & (1 << (7 - index))) !== 0 ? 'x' : '-').join('');
-            const labels = [];
-            if (status & 0x80) labels.push('MF');
-            if (status & 0x20) labels.push('accelerating');
-            if (status & 0x10) labels.push('end stop');
-            if (status & 0x04) labels.push('moving');
-            return `${bitPattern}${labels.length ? ` (${labels.join(', ')})` : ''}`;
+            let apertureState = '';
+                switch(status & 0x03) {
+                    case 0x00: apertureState = 'open'; break;
+                    case 0x01: apertureState = 'uninit'; break;
+                    case 0x02: apertureState = 'unknown'; break;
+                    case 0x03: apertureState = 'closing'; break;
+                    default: apertureState = 'unknown focus state';
+                }
+            return `${bitPattern}  (0x${bytesToHex2(status)})\n` +
+                `| || |||    \n` +
+                `| || | \\\\__ aperture ${apertureState}\n` +
+                `| ||  \\____ moving\n` +
+                `| | \\______ end stop\n` +
+                `|  \\_______ accelerating\n` +
+                ` \\_________ MF\n`;
+        }
+
+        function formatCanonEfIsStatus(status) {
+            const bitPattern = Array.from({ length: 8 }, (_, index) =>
+                (status & (1 << (7 - index))) !== 0 ? 'x' : '-').join('');
+            return `${bitPattern}  (0x${bytesToHex2(status)})\n` +
+                `    |||| \n` +
+                `    ||| \\_ unknown\n` +
+                `    || \\__ engaged\n` +
+                `    | \\___ enabled\n` +
+                `     \\____ spinning`;
         }
 
         async function pollCanonEfTelemetry() {
@@ -1929,7 +1951,14 @@
                 const statusResponse = await sendCanonEfLensTransaction(new Uint8Array([0x90, 0xB9, 0x00]));
                 const statusRx = canonEfResponseBytes(statusResponse);
                 if (statusRx.length >= 5) {
-                    setCanonEfLensField('canonEfFocusStatus', formatCanonEfStatus(statusRx[2]));
+                    setCanonEfLensField('canonEfStatus', formatCanonEfStatus(statusRx[2]));
+                }
+
+                const extendedStatusResponse = await sendCanonEfLensTransaction(new Uint8Array([0x91, 0xB9, 0x00, 0x00]));
+                const extendedStatusRx = canonEfResponseBytes(extendedStatusResponse);
+                if (extendedStatusRx.length >= 6) {
+                    const isStatus = extendedStatusRx[3];
+                    setCanonEfLensField('canonEfIsStatus', formatCanonEfIsStatus(isStatus));
                 }
             } catch (e) {
                 /* Poll failures must not interrupt manual lens control. */
@@ -1967,6 +1996,16 @@
             return value === 0xAA;
         }
 
+        function formatTime(timeInUs){
+            if(timeInUs < 1000){
+                return `${timeInUs.toFixed(0).toString().padStart(3, ' ')}us`;
+            } else if(timeInUs < 1000000){
+                return `${(timeInUs/1000).toFixed(0).toString().padStart(3, ' ')}ms`;
+            } else {
+                return `${(timeInUs/1000000).toFixed(0).toString().padStart(3, ' ')}s`;
+            }
+        }
+
         function formatCanonEfTransferTrace(tx, response) {
             const sent = Array.from(tx || []);
             const records = response.records || [];
@@ -1977,38 +2016,42 @@
                     lines.push(`Malformed measurement payload (${response.data.length} data bytes)`);
                 }
                 records.forEach((record, index) => {
+                    let index_str = index.toString().padStart(2, '0');
                     const txByte = index < sent.length ? bytesToHex2(sent[index]) : '--';
                     const rxByte = bytesToHex2(record.rx);
                     const stopped = response.status !== 0 && index === records.length - 1;
                     if (record.ack_delay_us === 0 || record.ack_delay_us === 0xFF) {
-                        lines.push(`[${index}] TX ${txByte}  NOT ACKNOWLEDGED  RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
+                        lines.push(`[${index_str}] TX ${txByte}, RX ${rxByte}${stopped ? '  <-- stopped' : ''}, NOT ACKNOWLEDGED `);
                     } else if (record.ack_duration_us === 0xFFFF) {
-                        lines.push(`[${index}] TX ${txByte}, ACK ${record.ack_delay_us}us, RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
+                        lines.push(`[${index_str}] TX ${txByte}, RX ${rxByte}${stopped ? '  <-- stopped' : ''}, ACK ${formatTime(record.ack_delay_us)}/---`);
                     } else {
-                        lines.push(`[${index}] TX ${txByte}, ACK ${record.ack_delay_us}us/${record.ack_duration_us}us, RX ${rxByte}${stopped ? '  <-- stopped' : ''}`);
+                        lines.push(`[${index_str}] TX ${txByte}, RX ${rxByte}${stopped ? '  <-- stopped' : ''}, ACK ${formatTime(record.ack_delay_us)}/${formatTime(record.ack_duration_us)}`);
                     }
                 });
                 if (records.length === 0 && response.status !== 0 && sent.length) {
-                    lines.push(`[0] TX ${bytesToHex2(sent[0])}  ATTEMPTED, measurement record missing  <-- stopped`);
+                    lines.push(`[00] TX ${bytesToHex2(sent[0])}  ATTEMPTED, measurement record missing  <-- stopped`);
                 }
                 if (response.status !== 0) {
                     const firstNotSent = records.length || (sent.length ? 1 : 0);
                     for (let index = firstNotSent; index < sent.length; index++) {
-                        lines.push(`[${index}] TX ${bytesToHex2(sent[index])}  NOT SENT`);
+                        let index_str = index.toString().padStart(2, '0');
+                        lines.push(`[${index_str}] TX ${bytesToHex2(sent[index])}  NOT SENT`);
                     }
                 }
             } else {
                 const received = Array.from(response.data || []);
                 received.forEach((rx, index) => {
+                    let index_str = index.toString().padStart(2, '0');
                     const stopped = response.status !== 0 && index === received.length - 1;
                     const ackText = response.ignore_ack
-                        ? 'ACK ignored (not measured)'
-                        : stopped ? 'NOT ACKNOWLEDGED' : 'ACKNOWLEDGED (timing not measured)';
-                    lines.push(`[${index}] TX ${bytesToHex2(sent[index])}  ${ackText}  RX ${bytesToHex2(rx)}${stopped ? '  <-- stopped' : ''}`);
+                        ? ''
+                        : stopped ? 'NOT ACKNOWLEDGED' : '';
+                    lines.push(`[${index_str}] TX ${bytesToHex2(sent[index])}, RX ${bytesToHex2(rx)}${stopped ? '  <-- stopped' : ''} ${ackText} `);
                 });
                 if (response.status !== 0) {
                     for (let index = received.length; index < sent.length; index++) {
-                        lines.push(`[${index}] TX ${bytesToHex2(sent[index])}  NOT SENT`);
+                        let index_str = index.toString().padStart(2, '0');
+                        lines.push(`[${index_str}] TX ${bytesToHex2(sent[index])}  NOT SENT`);
                     }
                 }
             }
@@ -2025,7 +2068,7 @@
                 return 'Command failed, Lens did not acknowledge command byte';
             }
             if (response.status === 0x07) {
-                return 'Command failed, Lens held ACK active longer than 3000 us';
+                return 'Command failed, Lens held ACK active too long';
             }
             const descriptions = {
                 0x01: 'Invalid transfer length',
@@ -2075,6 +2118,18 @@
                 nameBytes.push(character);
             }
             return String.fromCharCode(...nameBytes);
+        }
+
+        function decodeCanonEfBcdSerial(bytes) {
+            if (bytes.length !== 5) return null;
+            let serial = '';
+            for (const value of bytes) {
+                const high = value >> 4;
+                const low = value & 0x0F;
+                if (high > 9 || low > 9) return null;
+                serial += `${high}${low}`;
+            }
+            return serial;
         }
 
         function renderCanonEfLensResult(name, tx, response) {
@@ -2158,11 +2213,16 @@
                 const minFocal = rx[4];
                 const maxFocal = rx[6];
                 const focalLength = minFocal === maxFocal ? `${minFocal} mm` : `${minFocal}-${maxFocal} mm`;
-                setCanonEfLensField('canonEfLensType', `Type ID ${lensType} (candidate)`);
+                setCanonEfLensField('canonEfLensType', `Type ID ${lensType}`);
                 setCanonEfLensField('canonEfLensFocalLength', minFocal > 0 && maxFocal >= minFocal ? focalLength : '(not decoded)');
                 setCanonEfLensField('canonEfLensName', 'Reading...');
                 const name = await readCanonEfLensName();
                 setCanonEfLensField('canonEfLensName', name || '(not available)');
+                setCanonEfLensField('canonEfLensSerial', 'Reading...');
+                const serialResponse = await runCanonEfLensCommand('Read lens serial number', new Uint8Array([0x85, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A]));
+                const serialRx = canonEfResponseBytes(serialResponse);
+                const serial = serialResponse.status === 0 && serialRx.length >= 7 ? decodeCanonEfBcdSerial(serialRx.slice(1, 6)) : null;
+                setCanonEfLensField('canonEfLensSerial', serial || '(not available)');
                 const apertureResponse = await runCanonEfLensCommand('Get aperture limits', new Uint8Array([0xB0, 0x00, 0x00]));
                 const apertureRx = canonEfResponseBytes(apertureResponse);
                 if (apertureResponse.status === 0 && apertureRx.length >= 4) {
@@ -2179,6 +2239,7 @@
                 if (tablePanel) tablePanel.textContent = formatCanonEfTablesCompact(tables);
             } catch (e) {
                 setCanonEfLensField('canonEfLensName', '(read failed)');
+                setCanonEfLensField('canonEfLensSerial', '(read failed)');
                 const tablePanel = document.getElementById('canonEfLensTables');
                 if (tablePanel) tablePanel.textContent = 'Parameter tables: (read failed)';
                 logToConsole(`Canon EF lens info error: ${e.message}`, 'error');
@@ -2484,9 +2545,11 @@
                 setCanonEfLensField('canonEfLensType', '-');
                 setCanonEfLensField('canonEfLensFocalLength', '-');
                 setCanonEfLensField('canonEfLensName', '-');
+                setCanonEfLensField('canonEfLensSerial', '-');
                 setCanonEfLensField('canonEfFocusPosition', '-');
                 setCanonEfLensField('canonEfZoom', '-');
-                setCanonEfLensField('canonEfFocusStatus', '-');
+                setCanonEfLensField('canonEfStatus', '-');
+                setCanonEfLensField('canonEfIsStatus', '-');
                 setCanonEfLensField('canonEfFocusDistance', '-');
                 const tablePanel = document.getElementById('canonEfLensTables');
                 if (tablePanel) tablePanel.textContent = 'Parameter tables: -';
