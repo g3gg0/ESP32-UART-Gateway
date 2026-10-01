@@ -1016,122 +1016,170 @@
             <div class="controls-section protocol-content" id="canonEfInteraction" style="padding: 12px;">
                 <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
                     <div class="protocol-tabs">
-                        <button class="protocol-tab active" id="canonEfTabRaw" onclick="setCanonEfView('raw')">Raw controls</button>
-                        <button class="protocol-tab" id="canonEfTabLens" onclick="setCanonEfView('lens')">Lens control</button>
-                        <button class="protocol-tab" id="canonEfTabScan" onclick="setCanonEfView('scan')">Command scan</button>
+                        <button class="protocol-tab active" id="canonEfTabRaw" onclick="setCanonEfView('raw')">Raw
+                            controls</button>
+                        <button class="protocol-tab" id="canonEfTabLens" onclick="setCanonEfView('lens')">Lens
+                            control</button>
+                        <button class="protocol-tab" id="canonEfTabScan" onclick="setCanonEfView('scan')">Command
+                            scan</button>
                     </div>
 
                     <div id="canonEfRawView">
-                    <div class="proto-grid">
-                        <div>
-                            <label for="canonEfDcl">DCL GPIO</label>
-                            <select id="canonEfDcl"></select>
+                        <div class="proto-grid">
+                            <div>
+                                <label for="canonEfDcl">DCL GPIO</label>
+                                <select id="canonEfDcl"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfDlc">DLC GPIO</label>
+                                <select id="canonEfDlc"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfLclkOut">LCLK out GPIO</label>
+                                <select id="canonEfLclkOut"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfLclkIn">LCLK in GPIO</label>
+                                <select id="canonEfLclkIn"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfClock">Clock (Hz)</label>
+                                <input id="canonEfClock" value="200000" inputmode="numeric" />
+                            </div>
+                            <div>
+                                <button class="btn-primary" id="canonEfStartBtn" onclick="startCanonEf()"
+                                    disabled>Configure</button>
+                            </div>
+                            <div>
+                                <button class="btn-secondary" id="canonEfResetBtn" onclick="resetCanonEf()"
+                                    disabled>Reset lens</button>
+                            </div>
                         </div>
-                        <div>
-                            <label for="canonEfDlc">DLC GPIO</label>
-                            <select id="canonEfDlc"></select>
-                        </div>
-                        <div>
-                            <label for="canonEfLclkOut">LCLK out GPIO</label>
-                            <select id="canonEfLclkOut"></select>
-                        </div>
-                        <div>
-                            <label for="canonEfLclkIn">LCLK in GPIO</label>
-                            <select id="canonEfLclkIn"></select>
-                        </div>
-                        <div>
-                            <label for="canonEfClock">Clock (Hz)</label>
-                            <input id="canonEfClock" value="200000" inputmode="numeric" />
-                        </div>
-                        <div>
-                            <button class="btn-primary" id="canonEfStartBtn" onclick="startCanonEf()" disabled>Configure</button>
-                        </div>
-                        <div>
-                            <button class="btn-secondary" id="canonEfResetBtn" onclick="resetCanonEf()" disabled>Reset lens</button>
-                        </div>
-                    </div>
 
-                    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#9aa8b7; font-weight:700; font-size:12px;">
-                        <label><input id="canonEfInvertDcl" type="checkbox" checked /> Invert DCL</label>
-                        <label><input id="canonEfInvertDlc" type="checkbox" /> Invert DLC</label>
-                        <label><input id="canonEfInvertLclkOut" type="checkbox" checked /> Invert LCLK out</label>
-                        <label><input id="canonEfInvertLclkIn" type="checkbox" /> Invert LCLK in</label>
-                        <label for="canonEfAckMode">ACK mode</label>
-                        <select id="canonEfAckMode">
-                            <option value="normal">Normal</option>
-                            <option value="measurement" selected>Measurement</option>
-                            <option value="ignore">Ignore ACK</option>
-                        </select>
-                    </div>
+                        <div
+                            style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#9aa8b7; font-weight:700; font-size:12px;">
+                            <label><input id="canonEfInvertDcl" type="checkbox" checked /> Invert DCL</label>
+                            <label><input id="canonEfInvertDlc" type="checkbox" /> Invert DLC</label>
+                            <label><input id="canonEfInvertLclkOut" type="checkbox" checked /> Invert LCLK out</label>
+                            <label><input id="canonEfInvertLclkIn" type="checkbox" /> Invert LCLK in</label>
+                            <label for="canonEfAckMode">ACK mode</label>
+                            <select id="canonEfAckMode">
+                                <option value="normal">Normal</option>
+                                <option value="measurement" selected>Measurement</option>
+                                <option value="ignore">Ignore ACK</option>
+                            </select>
+                        </div>
 
-                    <div class="input-section">
-                        <input id="canonEfTxInput" placeholder="TX bytes, e.g. 00 00 00 AA BB" />
-                        <button class="btn-primary" id="canonEfSendBtn" onclick="sendCanonEf()" disabled>Transfer</button>
-                        <button class="btn-secondary" onclick="clearCanonEf()">Clear</button>
-                    </div>
-                    <div class="uart-rx-display" id="canonEfRxDisplay"></div>
+                        <div class="input-section">
+                            <input id="canonEfTxInput" placeholder="TX bytes, e.g. 00 00 00 AA BB" />
+                            <button class="btn-primary" id="canonEfSendBtn" onclick="sendCanonEf()"
+                                disabled>Transfer</button>
+                            <button class="btn-secondary" onclick="clearCanonEf()">Clear</button>
+                        </div>
+                        <div class="uart-rx-display" id="canonEfRxDisplay"></div>
                     </div>
 
                     <div id="canonEfLensView" style="display:none;">
-                        <div style="display:grid; grid-template-columns:minmax(0, 1fr) minmax(220px, 400px); gap:16px; align-items:start;">
-                        <div style="display:flex; flex-direction:column; gap:12px;">
-                            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
-                                <button class="btn-primary" id="canonEfInitializeBtn" onclick="initializeCanonEfLens()" disabled>Initialize</button>
-                                <button class="btn-secondary" id="canonEfInfoBtn" onclick="readCanonEfLensInfo()" disabled>Read lens info</button>
-                            </div>
-                            <div>
+                        <div
+                            style="display:grid; grid-template-columns:minmax(0, 1fr) minmax(220px, 400px); gap:16px; align-items:start;">
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+                                    <button class="btn-primary" id="canonEfInitializeBtn"
+                                        onclick="initializeCanonEfLens()" disabled>Initialize</button>
+                                    <button class="btn-secondary" id="canonEfInfoBtn" onclick="readCanonEfLensInfo()"
+                                        disabled>Read lens info</button>
+                                </div>
                                 <div>
-                                    <label>Focus</label>
-                                    <div class="canon-ef-action-grid">
-                                        <button class="btn-secondary" id="canonEfFocusNearBtn" onclick="focusCanonEfNear()" disabled>Near</button>
-                                        <button class="btn-secondary" id="canonEfFocusMinusBtn" onclick="moveCanonEfFocus(-canonEfJumpSize('canonEfFocusStep'))" disabled>-</button>
-                                        <select id="canonEfFocusStep" title="Focus jump size"><option value="1">1</option><option value="10">10</option><option value="100" selected>100</option></select>
-                                        <button class="btn-secondary" id="canonEfFocusPlusBtn" onclick="moveCanonEfFocus(canonEfJumpSize('canonEfFocusStep'))" disabled>+</button>
-                                        <button class="btn-secondary" id="canonEfFocusInfinityBtn" onclick="focusCanonEfInfinity()" disabled>Infinity</button>
-                                        <button class="btn-secondary" id="canonEfFocusCycleBtn" onclick="toggleCanonEfFocusCycle()" disabled>Cycle</button>
+                                    <div>
+                                        <label>Focus</label>
+                                        <div class="canon-ef-action-grid">
+                                            <button class="btn-secondary" id="canonEfFocusNearBtn"
+                                                onclick="focusCanonEfNear()" disabled>Near</button>
+                                            <button class="btn-secondary" id="canonEfFocusMinusBtn"
+                                                onclick="moveCanonEfFocus(-canonEfJumpSize('canonEfFocusStep'))"
+                                                disabled>-</button>
+                                            <select id="canonEfFocusStep" title="Focus jump size">
+                                                <option value="1">1</option>
+                                                <option value="10">10</option>
+                                                <option value="100" selected>100</option>
+                                            </select>
+                                            <button class="btn-secondary" id="canonEfFocusPlusBtn"
+                                                onclick="moveCanonEfFocus(canonEfJumpSize('canonEfFocusStep'))"
+                                                disabled>+</button>
+                                            <button class="btn-secondary" id="canonEfFocusInfinityBtn"
+                                                onclick="focusCanonEfInfinity()" disabled>Infinity</button>
+                                            <button class="btn-secondary" id="canonEfFocusCycleBtn"
+                                                onclick="toggleCanonEfFocusCycle()" disabled>Cycle</button>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div>
                                 <div>
-                                    <label>Aperture</label>
-                                    <div class="canon-ef-action-grid">
-                                        <button class="btn-secondary" id="canonEfApertureOpenBtn" onclick="moveCanonEfAperture(-128)" disabled>Open</button>
-                                        <button class="btn-secondary" id="canonEfApertureMinusBtn" onclick="moveCanonEfAperture(-canonEfJumpSize('canonEfApertureStep'))" disabled>-</button>
-                                        <select id="canonEfApertureStep" title="Aperture jump size"><option value="1">1</option><option value="10">10</option><option value="100" selected>100</option></select>
-                                        <button class="btn-secondary" id="canonEfAperturePlusBtn" onclick="moveCanonEfAperture(canonEfJumpSize('canonEfApertureStep'))" disabled>+</button>
-                                        <button class="btn-secondary" id="canonEfApertureCloseBtn" onclick="moveCanonEfAperture(127)" disabled>Close</button>
-                                        <button class="btn-secondary" id="canonEfApertureCycleBtn" onclick="toggleCanonEfApertureCycle()" disabled>Cycle</button>
+                                    <div>
+                                        <label>Aperture</label>
+                                        <div class="canon-ef-action-grid">
+                                            <button class="btn-secondary" id="canonEfApertureOpenBtn"
+                                                onclick="moveCanonEfAperture(-128)" disabled>Open</button>
+                                            <button class="btn-secondary" id="canonEfApertureMinusBtn"
+                                                onclick="moveCanonEfAperture(-canonEfJumpSize('canonEfApertureStep'))"
+                                                disabled>-</button>
+                                            <select id="canonEfApertureStep" title="Aperture jump size">
+                                                <option value="1">1</option>
+                                                <option value="10">10</option>
+                                                <option value="100" selected>100</option>
+                                            </select>
+                                            <button class="btn-secondary" id="canonEfAperturePlusBtn"
+                                                onclick="moveCanonEfAperture(canonEfJumpSize('canonEfApertureStep'))"
+                                                disabled>+</button>
+                                            <button class="btn-secondary" id="canonEfApertureCloseBtn"
+                                                onclick="moveCanonEfAperture(127)" disabled>Close</button>
+                                            <button class="btn-secondary" id="canonEfApertureCycleBtn"
+                                                onclick="toggleCanonEfApertureCycle()" disabled>Cycle</button>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div>
                                 <div>
-                                    <label>IS control</label>
-                                    <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px;">
-                                        <button class="btn-secondary" id="canonEfIsEnableBtn" onclick="setCanonEfIsRequested(true)" disabled>Enable</button>
-                                        <button class="btn-secondary" id="canonEfIsDisableBtn" onclick="setCanonEfIsRequested(false)" disabled>Disable</button>
+                                    <div>
+                                        <label>IS control</label>
+                                        <div
+                                            style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px;">
+                                            <button class="btn-secondary" id="canonEfIsEnableBtn"
+                                                onclick="setCanonEfIsRequested(true)" disabled>Enable</button>
+                                            <button class="btn-secondary" id="canonEfIsDisableBtn"
+                                                onclick="setCanonEfIsRequested(false)" disabled>Disable</button>
+                                        </div>
                                     </div>
                                 </div>
+                                <div class="uart-rx-display" id="canonEfLensResult"></div>
+                                <div class="uart-rx-display" id="canonEfTableDump"></div>
                             </div>
-                            <div class="uart-rx-display" id="canonEfLensResult"></div>
-                            <div class="uart-rx-display" id="canonEfTableDump"></div>
-                        </div>
-                        <div style="display:flex; flex-direction:column; gap:12px;">
-                        <div class="status-box-lite" style="display:grid; grid-template-columns:auto 1fr; gap:10px 14px; align-items:baseline;">
-                            <span style="color:#9aa8b7; font-weight:700;">Lens Type</span><span id="canonEfLensType">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Focal Length</span><span id="canonEfLensFocalLength">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Lens Name</span><span id="canonEfLensName">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Serial Number</span><span id="canonEfLensSerial">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Focus Position</span><span id="canonEfFocusPosition">-</span>
-                                <span style="color:#9aa8b7; font-weight:700;">Zoom</span><span id="canonEfZoom">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Status</span><span id="canonEfStatus" style="white-space:pre;">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">IS Status</span><span id="canonEfIsStatus" style="white-space:pre;">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Focus Distance</span><span id="canonEfFocusDistance">-</span>
-                            <span style="color:#9aa8b7; font-weight:700;">Aperture</span><span id="canonEfAperture">-</span>
-                        </div>
-                        <div class="status-box-lite" id="canonEfLensTables" style="font-size:12px; line-height:1.45; white-space:pre-wrap;">Parameter tables: -</div>
-                        </div>
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <div class="status-box-lite"
+                                    style="display:grid; grid-template-columns:auto 1fr; gap:10px 14px; align-items:baseline;">
+                                    <span style="color:#9aa8b7; font-weight:700;">Lens Type</span><span
+                                        id="canonEfLensType">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Focal Length</span><span
+                                        id="canonEfLensFocalLength">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Lens Name</span><span
+                                        id="canonEfLensName">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Serial Number</span><span
+                                        id="canonEfLensSerial">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Focus Position</span><span
+                                        id="canonEfFocusPosition">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Zoom</span><span
+                                        id="canonEfZoom">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Status</span><span id="canonEfStatus"
+                                        style="white-space:pre;">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">IS Status</span><span
+                                        id="canonEfIsStatus" style="white-space:pre;">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Focus Distance</span><span
+                                        id="canonEfFocusDistance">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Aperture</span><span
+                                        id="canonEfAperture">-</span>
+                                </div>
+                                <div class="status-box-lite" id="canonEfLensTables"
+                                    style="font-size:12px; line-height:1.45; white-space:pre-wrap;">Parameter tables: -
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -1151,13 +1199,17 @@
                                     <input id="canonEfScanSyncCount" value="5" inputmode="numeric" />
                                 </div>
                                 <div>
-                                    <button class="btn-primary" id="canonEfScanBtn" onclick="scanCanonEfCommands()" disabled>Scan</button>
+                                    <button class="btn-primary" id="canonEfScanBtn" onclick="scanCanonEfCommands()"
+                                        disabled>Scan</button>
                                 </div>
                                 <div>
-                                    <button class="btn-secondary canon-ef-scan-cycle" id="canonEfScanCycleBtn" onclick="toggleCanonEfScanCycle()" disabled>Cycle</button>
+                                    <button class="btn-secondary canon-ef-scan-cycle" id="canonEfScanCycleBtn"
+                                        onclick="toggleCanonEfScanCycle()" disabled>Cycle</button>
                                 </div>
                             </div>
-                            <div class="status-box-lite">Sends each opcode followed by the selected number of <code>0A</code> bytes. The displayed value removes one leading and one trailing <code>AA</code> sync reply when present.</div>
+                            <div class="status-box-lite">Sends each opcode followed by the selected number of
+                                <code>0A</code> bytes. The displayed value removes one leading and one trailing
+                                <code>AA</code> sync reply when present.</div>
                             <div class="uart-rx-display" id="canonEfScanResult"></div>
                         </div>
                     </div>
@@ -1885,13 +1937,13 @@
             const bitPattern = Array.from({ length: 8 }, (_, index) =>
                 (status & (1 << (7 - index))) !== 0 ? 'x' : '-').join('');
             let apertureState = '';
-                switch(status & 0x03) {
-                    case 0x00: apertureState = 'open'; break;
-                    case 0x01: apertureState = 'uninit'; break;
-                    case 0x02: apertureState = 'unknown'; break;
-                    case 0x03: apertureState = 'closing'; break;
-                    default: apertureState = 'unknown focus state';
-                }
+            switch (status & 0x03) {
+                case 0x00: apertureState = 'open'; break;
+                case 0x01: apertureState = 'uninit'; break;
+                case 0x02: apertureState = 'unknown'; break;
+                case 0x03: apertureState = 'closing'; break;
+                default: apertureState = 'unknown focus state';
+            }
             return `${bitPattern}  (0x${bytesToHex2(status)})\n` +
                 `| || |||    \n` +
                 `| || | \\\\__ aperture ${apertureState}\n` +
@@ -1937,12 +1989,12 @@
                 if (distanceRx.length >= 6) {
                     const valueA = (distanceRx[1] << 8) | distanceRx[2];
                     const valueB = (distanceRx[3] << 8) | distanceRx[4];
-                    if(valueA === 0xFFFF && valueB === 0xFFFF) {
+                    if (valueA === 0xFFFF && valueB === 0xFFFF) {
                         setCanonEfLensField('canonEfFocusDistance', 'infinity (0xFFFF 0xFFFF)');
                     } else if (valueA === 0 && valueB === 0) {
                         setCanonEfLensField('canonEfFocusDistance', 'unknown (0x0000 0x0000)');
                     } else {
-                        setCanonEfLensField('canonEfFocusDistance', `${(valueA/100.0).toFixed(1)}m - ${(valueB/100.0).toFixed(1)}m (0x${valueA.toString(16).toUpperCase().padStart(4, '0')} 0x${valueB.toString(16).toUpperCase().padStart(4, '0')})`);
+                        setCanonEfLensField('canonEfFocusDistance', `${(valueA / 100.0).toFixed(1)}m - ${(valueB / 100.0).toFixed(1)}m (0x${valueA.toString(16).toUpperCase().padStart(4, '0')} 0x${valueB.toString(16).toUpperCase().padStart(4, '0')})`);
                     }
                 }
 
@@ -2008,13 +2060,13 @@
             return value === 0xAA;
         }
 
-        function formatTime(timeInUs){
-            if(timeInUs < 1000){
+        function formatTime(timeInUs) {
+            if (timeInUs < 1000) {
                 return `${timeInUs.toFixed(0).toString().padStart(3, ' ')}us`;
-            } else if(timeInUs < 1000000){
-                return `${(timeInUs/1000).toFixed(0).toString().padStart(3, ' ')}ms`;
+            } else if (timeInUs < 1000000) {
+                return `${(timeInUs / 1000).toFixed(0).toString().padStart(3, ' ')}ms`;
             } else {
-                return `${(timeInUs/1000000).toFixed(0).toString().padStart(3, ' ')}s`;
+                return `${(timeInUs / 1000000).toFixed(0).toString().padStart(3, ' ')}s`;
             }
         }
 
@@ -2209,6 +2261,343 @@
                 setCanUiState();
             }
         }
+
+        const lenses = [
+            { id: "01", name: "Canon EF 50mm f/1.8" },
+            { id: "02", name: "Canon EF 28mm f/2.8" },
+            { id: "03", name: "Canon EF 135mm f/2.8 Soft" },
+            { id: "04", name: "Canon EF 35-105mm f/3.5-4.5 or Sigma Lens" },
+            { id: "04", name: "Sigma UC Zoom 35-135mm f/4-5.6" },
+            { id: "05", name: "Canon EF 35-70mm f/3.5-4.5" },
+            { id: "06", name: "Canon EF 28-70mm f/3.5-4.5 or Sigma or Tokina Lens" },
+            { id: "06", name: "Sigma 18-50mm f/3.5-5.6 DC" },
+            { id: "06", name: "Sigma 18-125mm f/3.5-5.6 DC IF ASP" },
+            { id: "06", name: "Tokina AF 193-2 19-35mm f/3.5-4.5" },
+            { id: "06", name: "Sigma 28-80mm f/3.5-5.6 II Macro" },
+            { id: "07", name: "Canon EF 100-300mm f/5.6L" },
+            { id: "08", name: "Canon EF 100-300mm f/5.6 or Sigma or Tokina Lens" },
+            { id: "08", name: "Sigma 70-300mm f/4-5.6 [APO] DG Macro" },
+            { id: "08", name: "Tokina AT-X 242 AF 24-200mm f/3.5-5.6" },
+            { id: "09", name: "Canon EF 70-210mm f/4" },
+            { id: "09", name: "Sigma 55-200mm f/4-5.6 DC" },
+            { id: "0A", name: "Canon EF 50mm f/2.5 Macro or Sigma Lens" },
+            { id: "0A", name: "Sigma 50mm f/2.8 EX" },
+            { id: "0A", name: "Sigma 28mm f/1.8" },
+            { id: "0A", name: "Sigma 105mm f/2.8 Macro EX" },
+            { id: "0A", name: "Sigma 70mm f/2.8 EX DG Macro EF" },
+            { id: "0B", name: "Canon EF 35mm f/2" },
+            { id: "0D", name: "Canon EF 15mm f/2.8 Fisheye" },
+            { id: "0E", name: "Canon EF 50-200mm f/3.5-4.5L" },
+            { id: "0F", name: "Canon EF 50-200mm f/3.5-4.5" },
+            { id: "10", name: "Canon EF 35-135mm f/3.5-4.5" },
+            { id: "11", name: "Canon EF 35-70mm f/3.5-4.5A" },
+            { id: "12", name: "Canon EF 28-70mm f/3.5-4.5" },
+            { id: "14", name: "Canon EF 100-200mm f/4.5A" },
+            { id: "15", name: "Canon EF 80-200mm f/2.8L" },
+            { id: "16", name: "Canon EF 20-35mm f/2.8L or Tokina Lens" },
+            { id: "16", name: "Tokina AT-X 280 AF Pro 28-80mm f/2.8 Aspherical" },
+            { id: "17", name: "Canon EF 35-105mm f/3.5-4.5" },
+            { id: "18", name: "Canon EF 35-80mm f/4-5.6 Power Zoom" },
+            { id: "19", name: "Canon EF 35-80mm f/4-5.6 Power Zoom" },
+            { id: "1A", name: "Canon EF 100mm f/2.8 Macro or Other Lens" },
+            { id: "1A", name: "Cosina 100mm f/3.5 Macro AF" },
+            { id: "1A", name: "Tamron SP AF 90mm f/2.8 Di Macro" },
+            { id: "1A", name: "Tamron SP AF 180mm f/3.5 Di Macro" },
+            { id: "1A", name: "Zeiss Planar T* 50mm f/1.4" },
+            { id: "1B", name: "Canon EF 35-80mm f/4-5.6" },
+            { id: "1C", name: "Canon EF 80-200mm f/4.5-5.6 or Tamron Lens" },
+            { id: "1C", name: "Tamron SP AF 28-105mm f/2.8 LD Aspherical IF" },
+            { id: "1C", name: "Tamron SP AF 28-75mm f/2.8 XR Di LD Aspherical [IF] Macro" },
+            { id: "1C", name: "Tamron AF 70-300mm f/4-5.6 Di LD 1:2 Macro" },
+            { id: "1C", name: "Tamron AF Aspherical 28-200mm f/3.8-5.6" },
+            { id: "1D", name: "Canon EF 50mm f/1.8 II" },
+            { id: "1E", name: "Canon EF 35-105mm f/4.5-5.6" },
+            { id: "1F", name: "Canon EF 75-300mm f/4-5.6 or Tamron Lens" },
+            { id: "1F", name: "Tamron SP AF 300mm f/2.8 LD IF" },
+            { id: "20", name: "Canon EF 24mm f/2.8 or Sigma Lens" },
+            { id: "20", name: "Sigma 15mm f/2.8 EX Fisheye" },
+            { id: "21", name: "Voigtlander or Carl Zeiss Lens" },
+            { id: "21", name: "Voigtlander Ultron 40mm f/2 SLII Aspherical" },
+            { id: "21", name: "Voigtlander Color Skopar 20mm f/3.5 SLII Aspherical" },
+            { id: "21", name: "Voigtlander APO-Lanthar 90mm f/3.5 SLII Close Focus" },
+            { id: "21", name: "Zeiss Distagon T* 15mm f/2.8 ZE" },
+            { id: "21", name: "Zeiss Distagon T* 18mm f/3.5 ZE" },
+            { id: "21", name: "Zeiss Distagon T* 21mm f/2.8 ZE" },
+            { id: "21", name: "Zeiss Distagon T* 25mm f/2 ZE" },
+            { id: "21", name: "Zeiss Distagon T* 28mm f/2 ZE" },
+            { id: "21", name: "Zeiss Distagon T* 35mm f/2 ZE" },
+            { id: "10", name: "21 Zeiss Distagon T* 35mm f/1.4 ZE" },
+            { id: "11", name: "21 Zeiss Planar T* 50mm f/1.4 ZE" },
+            { id: "12", name: "21 Zeiss Makro-Planar T* 50mm f/2 ZE" },
+            { id: "13", name: "21 Zeiss Makro-Planar T* 100mm f/2 ZE" },
+            { id: "14", name: "21 Zeiss Apo-Sonnar T* 135mm f/2 ZE" },
+            { id: "23", name: "Canon EF 35-80mm f/4-5.6" },
+            { id: "24", name: "Canon EF 38-76mm f/4.5-5.6" },
+            { id: "25", name: "Canon EF 35-80mm f/4-5.6 or Tamron Lens" },
+            { id: "25", name: "Tamron 70-200mm f/2.8 Di LD IF Macro" },
+            { id: "25", name: "Tamron AF 28-300mm f/3.5-6.3 XR Di VC LD Aspherical [IF] Macro Model A20" },
+            { id: "25", name: "Tamron SP AF 17-50mm f/2.8 XR Di II VC LD Aspherical [IF]" },
+            { id: "25", name: "Tamron AF 18-270mm f/3.5-6.3 Di II VC LD Aspherical [IF] Macro" },
+            { id: "26", name: "Canon EF 80-200mm f/4.5-5.6" },
+            { id: "27", name: "Canon EF 75-300mm f/4-5.6" },
+            { id: "28", name: "Canon EF 28-80mm f/3.5-5.6" },
+            { id: "29", name: "Canon EF 28-90mm f/4-5.6" },
+            { id: "2A", name: "Canon EF 28-200mm f/3.5-5.6 or Tamron Lens" },
+            { id: "2B", name: "Tamron AF 28-300mm f/3.5-6.3 XR Di VC LD Aspherical [IF] Macro Model A20" },
+            { id: "2B", name: "Canon EF 28-105mm f/4-5.6" },
+            { id: "2C", name: "Canon EF 90-300mm f/4.5-5.6" },
+            { id: "2D", name: "Canon EF-S 18-55mm f/3.5-5.6 [II]" },
+            { id: "2E", name: "Canon EF 28-90mm f/4-5.6" },
+            { id: "2F", name: "Zeiss Milvus 35mm f/2 or 50mm f/2" },
+            { id: "2F", name: "Zeiss Milvus 50mm f/2 Makro" },
+            { id: "30", name: "Canon EF-S 18-55mm f/3.5-5.6 IS" },
+            { id: "31", name: "Canon EF-S 55-250mm f/4-5.6 IS" },
+            { id: "32", name: "Canon EF-S 18-200mm f/3.5-5.6 IS" },
+            { id: "33", name: "Canon EF-S 18-135mm f/3.5-5.6 IS" },
+            { id: "34", name: "Canon EF-S 18-55mm f/3.5-5.6 IS II" },
+            { id: "35", name: "Canon EF-S 18-55mm f/3.5-5.6 III" },
+            { id: "36", name: "Canon EF-S 55-250mm f/4-5.6 IS II" },
+            { id: "5E", name: "Canon TS-E 17mm f/4L" },
+            { id: "5F", name: "Canon TS-E 24.0mm f/3.5 L II" },
+            { id: "7C", name: "Canon MP-E 65mm f/2.8 1-5x Macro Photo" },
+            { id: "7D", name: "Canon TS-E 24mm f/3.5L" },
+            { id: "7E", name: "Canon TS-E 45mm f/2.8" },
+            { id: "7F", name: "Canon TS-E 90mm f/2.8" },
+            { id: "81", name: "Canon EF 300mm f/2.8L" },
+            { id: "82", name: "Canon EF 50mm f/1.0L" },
+            { id: "83", name: "Canon EF 28-80mm f/2.8-4L or Sigma Lens" },
+            { id: "83", name: "Sigma 8mm f/3.5 EX DG Circular Fisheye" },
+            { id: "83", name: "Sigma 17-35mm f/2.8-4 EX DG Aspherical HSM" },
+            { id: "83", name: "Sigma 17-70mm f/2.8-4.5 DC Macro" },
+            { id: "83", name: "Sigma APO 50-150mm f/2.8 [II] EX DC HSM" },
+            { id: "83", name: "Sigma APO 120-300mm f/2.8 EX DG HSM" },
+            { id: "83", name: "Sigma 4.5mm f/2.8 EX DC HSM Circular Fisheye" },
+            { id: "83", name: "Sigma 70-200mm f/2.8 APO EX HSM" },
+            { id: "84", name: "Canon EF 1200mm f/5.6L" },
+            { id: "86", name: "Canon EF 600mm f/4L IS" },
+            { id: "87", name: "Canon EF 200mm f/1.8L" },
+            { id: "88", name: "Canon EF 300mm f/2.8L" },
+            { id: "89", name: "Canon EF 85mm f/1.2L or Sigma or Tamron Lens" },
+            { id: "89", name: "Sigma 18-50mm f/2.8-4.5 DC OS HSM" },
+            { id: "89", name: "Sigma 50-200mm f/4-5.6 DC OS HSM" },
+            { id: "89", name: "Sigma 18-250mm f/3.5-6.3 DC OS HSM" },
+            { id: "89", name: "Sigma 24-70mm f/2.8 IF EX DG HSM" },
+            { id: "89", name: "Sigma 18-125mm f/3.8-5.6 DC OS HSM" },
+            { id: "89", name: "Sigma 17-70mm f/2.8-4 DC Macro OS HSM | C" },
+            { id: "89", name: "Sigma 17-50mm f/2.8 OS HSM" },
+            { id: "89", name: "Sigma 18-200mm f/3.5-6.3 DC OS HSM [II]" },
+            { id: "89", name: "Tamron AF 18-270mm f/3.5-6.3 Di II VC PZD" },
+            { id: "10", name: "89 Sigma 8-16mm f/4.5-5.6 DC HSM" },
+            { id: "11", name: "89 Tamron SP 17-50mm f/2.8 XR Di II VC" },
+            { id: "12", name: "89 Tamron SP 60mm f/2 Macro Di II" },
+            { id: "13", name: "89 Sigma 10-20mm f/3.5 EX DC HSM" },
+            { id: "14", name: "89 Tamron SP 24-70mm f/2.8 Di VC USD" },
+            { id: "15", name: "89 Sigma 18-35mm f/1.8 DC HSM" },
+            { id: "16", name: "89 Sigma 12-24mm f/4.5-5.6 DG HSM II" },
+            { id: "8A", name: "Canon EF 28-80mm f/2.8-4L" },
+            { id: "8B", name: "Canon EF 400mm f/2.8L" },
+            { id: "8C", name: "Canon EF 500mm f/4.5L" },
+            { id: "8D", name: "Canon EF 500mm f/4.5L" },
+            { id: "8E", name: "Canon EF 300mm f/2.8L IS" },
+            { id: "8F", name: "Canon EF 500mm f/4L IS or Sigma Lens" },
+            { id: "8F", name: "Sigma 17-70mm f/2.8-4 DC Macro OS HSM" },
+            { id: "90", name: "Canon EF 35-135mm f/4-5.6 USM" },
+            { id: "91", name: "Canon EF 100-300mm f/4.5-5.6 USM" },
+            { id: "92", name: "Canon EF 70-210mm f/3.5-4.5 USM" },
+            { id: "93", name: "Canon EF 35-135mm f/4-5.6 USM" },
+            { id: "94", name: "Canon EF 28-80mm f/3.5-5.6 USM" },
+            { id: "95", name: "Canon EF 100mm f/2 USM" },
+            { id: "96", name: "Canon EF 14mm f/2.8L or Sigma Lens" },
+            { id: "96", name: "Sigma 20mm EX f/1.8" },
+            { id: "96", name: "Sigma 30mm f/1.4 DC HSM" },
+            { id: "96", name: "Sigma 24mm f/1.8 DG Macro EX" },
+            { id: "96", name: "Sigma 28mm f/1.8 DG Macro EX" },
+            { id: "97", name: "Canon EF 200mm f/2.8L" },
+            { id: "98", name: "Canon EF 300mm f/4L IS or Sigma Lens" },
+            { id: "98", name: "Sigma 12-24mm f/4.5-5.6 EX DG ASPHERICAL HSM" },
+            { id: "98", name: "Sigma 14mm f/2.8 EX Aspherical HSM" },
+            { id: "98", name: "Sigma 10-20mm f/4-5.6" },
+            { id: "98", name: "Sigma 100-300mm f/4" },
+            { id: "99", name: "Canon EF 35-350mm f/3.5-5.6L or Sigma or Tamron Lens" },
+            { id: "99", name: "Sigma 50-500mm f/4-6.3 APO HSM EX" },
+            { id: "99", name: "Tamron AF 28-300mm f/3.5-6.3 XR LD Aspherical [IF] Macro" },
+            { id: "99", name: "Tamron AF 18-200mm f/3.5-6.3 XR Di II LD Aspherical [IF] Macro Model A14" },
+            { id: "99", name: "Tamron 18-250mm f/3.5-6.3 Di II LD Aspherical [IF] Macro" },
+            { id: "9A", name: "Canon EF 20mm f/2.8 USM or Zeiss Lens" },
+            { id: "9A", name: "Zeiss Milvus 21mm f/2.8" },
+            { id: "9B", name: "Canon EF 85mm f/1.8 USM" },
+            { id: "9C", name: "Canon EF 28-105mm f/3.5-4.5 USM or Tamron Lens" },
+            { id: "9C", name: "Tamron SP 70-300mm f/4.0-5.6 Di VC USD" },
+            { id: "9C", name: "Tamron SP AF 28-105mm f/2.8 LD Aspherical IF" },
+            { id: "A0", name: "Canon EF 20-35mm f/3.5-4.5 USM or Tamron or Tokina Lens" },
+            { id: "A0", name: "Tamron AF 19-35mm f/3.5-4.5" },
+            { id: "A0", name: "Tokina AT-X 124 AF Pro DX 12-24mm f/4" },
+            { id: "A0", name: "Tokina AT-X 107 AF DX 10-17mm f/3.5-4.5 Fisheye" },
+            { id: "A0", name: "Tokina AT-X 116 AF Pro DX 11-16mm f/2.8" },
+            { id: "A0", name: "Tokina AT-X 11-20 F2.8 PRO DX Aspherical 11-20mm f/2.8" },
+            { id: "A1", name: "Canon EF 28-70mm f/2.8L or Sigma or Tamron Lens" },
+            { id: "A1", name: "Sigma 24-70mm f/2.8 EX" },
+            { id: "A1", name: "Sigma 28-70mm f/2.8 EX" },
+            { id: "A1", name: "Sigma 24-60mm f/2.8 EX DG" },
+            { id: "A1", name: "Tamron AF 17-50mm f/2.8 Di-II LD Aspherical" },
+            { id: "A1", name: "Tamron 90mm f/2.8" },
+            { id: "A1", name: "Tamron SP AF 17-35mm f/2.8-4 Di LD Aspherical IF" },
+            { id: "A1", name: "Tamron SP AF 28-75mm f/2.8 XR Di LD Aspherical [IF] Macro" },
+            { id: "A2", name: "Canon EF 200mm f/2.8L" },
+            { id: "A3", name: "Canon EF 300mm f/4L" },
+            { id: "A4", name: "Canon EF 400mm f/5.6L" },
+            { id: "A5", name: "Canon EF 70-200mm f/2.8 L" },
+            { id: "A6", name: "Canon EF 70-200mm f/2.8 L + 1.4x" },
+            { id: "A7", name: "Canon EF 70-200mm f/2.8 L + 2x" },
+            { id: "A8", name: "Canon EF 28mm f/1.8 USM or Sigma Lens" },
+            { id: "A8", name: "Sigma 50-100mm f/1.8 DC HSM | A" },
+            { id: "A9", name: "Canon EF 17-35mm f/2.8L or Sigma Lens" },
+            { id: "A9", name: "Sigma 18-200mm f/3.5-6.3 DC OS" },
+            { id: "A9", name: "Sigma 15-30mm f/3.5-4.5 EX DG Aspherical" },
+            { id: "A9", name: "Sigma 18-50mm f/2.8 Macro" },
+            { id: "A9", name: "Sigma 50mm f/1.4 EX DG HSM" },
+            { id: "A9", name: "Sigma 85mm f/1.4 EX DG HSM" },
+            { id: "A9", name: "Sigma 30mm f/1.4 EX DC HSM" },
+            { id: "A9", name: "Sigma 35mm f/1.4 DG HSM" },
+            { id: "AA", name: "Canon EF 200mm f/2.8L II" },
+            { id: "AB", name: "Canon EF 300mm f/4L" },
+            { id: "AC", name: "Canon EF 400mm f/5.6L or Sigma Lens" },
+            { id: "AC", name: "Sigma 150-600mm f/5-6.3 DG OS HSM | S" },
+            { id: "AD", name: "Canon EF 180mm Macro f/3.5L or Sigma Lens" },
+            { id: "AD", name: "Sigma 180mm EX HSM Macro f/3.5" },
+            { id: "AD", name: "Sigma APO Macro 150mm f/2.8 EX DG HSM" },
+            { id: "AE", name: "Canon EF 135mm f/2L or Other Lens" },
+            { id: "AE", name: "Sigma 70-200mm f/2.8 EX DG APO OS HSM" },
+            { id: "AE", name: "Sigma 50-500mm f/4.5-6.3 APO DG OS HSM" },
+            { id: "AE", name: "Sigma 150-500mm f/5-6.3 APO DG OS HSM" },
+            { id: "AE", name: "Zeiss Milvus 100mm f/2 Makro" },
+            { id: "AF", name: "Canon EF 400mm f/2.8L" },
+            { id: "B0", name: "Canon EF 24-85mm f/3.5-4.5 USM" },
+            { id: "B1", name: "Canon EF 300mm f/4L IS" },
+            { id: "B2", name: "Canon EF 28-135mm f/3.5-5.6 IS" },
+            { id: "B3", name: "Canon EF 24mm f/1.4L" },
+            { id: "B4", name: "Canon EF 35mm f/1.4L or Other Lens" },
+            { id: "B4", name: "Sigma 50mm f/1.4 DG HSM | A" },
+            { id: "B4", name: "Sigma 24mm f/1.4 DG HSM | A" },
+            { id: "B4", name: "Zeiss Milvus 50mm f/1.4" },
+            { id: "B4", name: "Zeiss Milvus 85mm f/1.4" },
+            { id: "B4", name: "Zeiss Otus 28mm f/1.4 ZE" },
+            { id: "B5", name: "Canon EF 100-400mm f/4.5-5.6L IS + 1.4x or Sigma Lens" },
+            { id: "B5", name: "Sigma 150-600mm f/5-6.3 DG OS HSM | S + 1.4x" },
+            { id: "B6", name: "Canon EF 100-400mm f/4.5-5.6L IS + 2x or Sigma Lens" },
+            { id: "B6", name: "Sigma 150-600mm f/5-6.3 DG OS HSM | S + 2x" },
+            { id: "B7", name: "Canon EF 100-400mm f/4.5-5.6L IS or Sigma Lens" },
+            { id: "B7", name: "Sigma 150mm f/2.8 EX DG OS HSM APO Macro" },
+            { id: "B7", name: "Sigma 105mm f/2.8 EX DG OS HSM Macro" },
+            { id: "B7", name: "Sigma 180mm f/2.8 EX DG OS HSM APO Macro" },
+            { id: "B7", name: "Sigma 150-600mm f/5-6.3 DG OS HSM | C" },
+            { id: "B7", name: "Sigma 150-600mm f/5-6.3 DG OS HSM | S" },
+            { id: "B8", name: "Canon EF 400mm f/2.8L + 2x" },
+            { id: "B9", name: "Canon EF 600mm f/4L IS" },
+            { id: "BA", name: "Canon EF 70-200mm f/4L" },
+            { id: "BB", name: "Canon EF 70-200mm f/4L + 1.4x" },
+            { id: "BC", name: "Canon EF 70-200mm f/4L + 2x" },
+            { id: "BD", name: "Canon EF 70-200mm f/4L + 2.8x" },
+            { id: "BE", name: "Canon EF 100mm f/2.8 Macro USM" },
+            { id: "BF", name: "Canon EF 400mm f/4 DO IS" },
+            { id: "C1", name: "Canon EF 35-80mm f/4-5.6 USM" },
+            { id: "C2", name: "Canon EF 80-200mm f/4.5-5.6 USM" },
+            { id: "C3", name: "Canon EF 35-105mm f/4.5-5.6 USM" },
+            { id: "C4", name: "Canon EF 75-300mm f/4-5.6 USM" },
+            { id: "C5", name: "Canon EF 75-300mm f/4-5.6 IS USM" },
+            { id: "C6", name: "Canon EF 50mm f/1.4 USM or Zeiss Lens" },
+            { id: "C6", name: "Zeiss Otus 55mm f/1.4 ZE" },
+            { id: "C6", name: "Zeiss Otus 85mm f/1.4 ZE" },
+            { id: "C7", name: "Canon EF 28-80mm f/3.5-5.6 USM" },
+            { id: "C8", name: "Canon EF 75-300mm f/4-5.6 USM" },
+            { id: "C9", name: "Canon EF 28-80mm f/3.5-5.6 USM" },
+            { id: "CA", name: "Canon EF 28-80mm f/3.5-5.6 USM IV" },
+            { id: "D0", name: "Canon EF 22-55mm f/4-5.6 USM" },
+            { id: "D1", name: "Canon EF 55-200mm f/4.5-5.6" },
+            { id: "D2", name: "Canon EF 28-90mm f/4-5.6 USM" },
+            { id: "D3", name: "Canon EF 28-200mm f/3.5-5.6 USM" },
+            { id: "D4", name: "Canon EF 28-105mm f/4-5.6 USM" },
+            { id: "D5", name: "Canon EF 90-300mm f/4.5-5.6 USM or Tamron Lens" },
+            { id: "D5", name: "Tamron SP 150-600mm f/5-6.3 Di VC USD" },
+            { id: "D5", name: "Tamron 16-300mm f/3.5-6.3 Di II VC PZD Macro" },
+            { id: "D5", name: "Tamron SP 35mm f/1.8 Di VC USD" },
+            { id: "D5", name: "Tamron SP 45mm f/1.8 Di VC USD" },
+            { id: "D6", name: "Canon EF-S 18-55mm f/3.5-5.6 USM" },
+            { id: "D7", name: "Canon EF 55-200mm f/4.5-5.6 II USM" },
+            { id: "D9", name: "Tamron AF 18-270mm f/3.5-6.3 Di II VC PZD" },
+            { id: "E0", name: "Canon EF 70-200mm f/2.8L IS" },
+            { id: "E1", name: "Canon EF 70-200mm f/2.8L IS + 1.4x" },
+            { id: "E2", name: "Canon EF 70-200mm f/2.8L IS + 2x" },
+            { id: "E3", name: "Canon EF 70-200mm f/2.8L IS + 2.8x" },
+            { id: "E4", name: "Canon EF 28-105mm f/3.5-4.5 USM" },
+            { id: "E5", name: "Canon EF 16-35mm f/2.8L" },
+            { id: "E6", name: "Canon EF 24-70mm f/2.8L" },
+            { id: "E7", name: "Canon EF 17-40mm f/4L" },
+            { id: "E8", name: "Canon EF 70-300mm f/4.5-5.6 DO IS USM" },
+            { id: "E9", name: "Canon EF 28-300mm f/3.5-5.6L IS" },
+            { id: "EA", name: "Canon EF-S 17-85mm f/4-5.6 IS USM or Tokina Lens" },
+            { id: "EA", name: "Tokina AT-X 12-28 PRO DX 12-28mm f/4" },
+            { id: "EB", name: "Canon EF-S 10-22mm f/3.5-4.5 USM" },
+            { id: "EC", name: "Canon EF-S 60mm f/2.8 Macro USM" },
+            { id: "ED", name: "Canon EF 24-105mm f/4L IS" },
+            { id: "EE", name: "Canon EF 70-300mm f/4-5.6 IS USM" },
+            { id: "EF", name: "Canon EF 85mm f/1.2L II" },
+            { id: "F0", name: "Canon EF-S 17-55mm f/2.8 IS USM" },
+            { id: "F1", name: "Canon EF 50mm f/1.2L" },
+            { id: "F2", name: "Canon EF 70-200mm f/4L IS" },
+            { id: "F3", name: "Canon EF 70-200mm f/4L IS + 1.4x" },
+            { id: "F4", name: "Canon EF 70-200mm f/4L IS + 2x" },
+            { id: "F5", name: "Canon EF 70-200mm f/4L IS + 2.8x" },
+            { id: "F6", name: "Canon EF 16-35mm f/2.8L II" },
+            { id: "F7", name: "Canon EF 14mm f/2.8L II USM" },
+            { id: "F8", name: "Canon EF 200mm f/2L IS or Sigma Lens" },
+            { id: "F8", name: "Sigma 24-35mm f/2 DG HSM | A" },
+            { id: "F9", name: "Canon EF 800mm f/5.6L IS" },
+            { id: "FA", name: "Canon EF 24mm f/1.4L II or Sigma Lens" },
+            { id: "FA", name: "Sigma 20mm f/1.4 DG HSM | A" },
+            { id: "FB", name: "Canon EF 70-200mm f/2.8L IS II USM" },
+            { id: "FC", name: "Canon EF 70-200mm f/2.8L IS II USM + 1.4x" },
+            { id: "FD", name: "Canon EF 70-200mm f/2.8L IS II USM + 2x" },
+            { id: "FE", name: "Canon EF 100mm f/2.8L Macro IS USM" },
+            { id: "FF", name: "Sigma 24-105mm f/4 DG OS HSM | A or Other Sigma Lens" },
+            { id: "FF", name: "Sigma 180mm f/2.8 EX DG OS HSM APO Macro" },
+            { id: "01E8", name: "Canon EF-S 15-85mm f/3.5-5.6 IS USM" },
+            { id: "01E9", name: "Canon EF 70-300mm f/4-5.6L IS USM" },
+            { id: "01EA", name: "Canon EF 8-15mm f/4L Fisheye USM" },
+            { id: "01EB", name: "Canon EF 300mm f/2.8L IS II USM" },
+            { id: "01EC", name: "Canon EF 400mm f/2.8L IS II USM" },
+            { id: "01ED", name: "Canon EF 500mm f/4L IS II USM or EF 24-105mm f4L IS USM" },
+            { id: "01ED", name: "Canon EF 24-105mm f/4L IS USM" },
+            { id: "01EE", name: "Canon EF 600mm f/4.0L IS II USM" },
+            { id: "01EF", name: "Canon EF 24-70mm f/2.8L II USM" },
+            { id: "01F0", name: "Canon EF 200-400mm f/4L IS USM" },
+            { id: "01F3", name: "Canon EF 200-400mm f/4L IS USM + 1.4x" },
+            { id: "01F6", name: "Canon EF 28mm f/2.8 IS USM" },
+            { id: "01F7", name: "Canon EF 24mm f/2.8 IS USM" },
+            { id: "01F8", name: "Canon EF 24-70mm f/4L IS USM" },
+            { id: "01F9", name: "Canon EF 35mm f/2 IS USM" },
+            { id: "01FA", name: "Canon EF 400mm f/4 DO IS II USM" },
+            { id: "01FB", name: "Canon EF 16-35mm f/4L IS USM" },
+            { id: "01FC", name: "Canon EF 11-24mm f/4L USM" },
+            { id: "02EB", name: "Canon EF 100-400mm f/4.5-5.6L IS II USM" },
+            { id: "02EC", name: "Canon EF 100-400mm f/4.5-5.6L IS II USM + 1.4x" },
+            { id: "02EE", name: "Canon EF 35mm f/1.4L II USM" },
+            { id: "102E", name: "Canon EF-S 18-135mm f/3.5-5.6 IS STM" },
+            { id: "102F", name: "Canon EF-M 18-55mm f/3.5-5.6 IS STM or Tamron Lens" },
+            { id: "102F", name: "Tamron 18-200mm F/3.5-6.3 Di III VC" },
+            { id: "1030", name: "Canon EF 40mm f/2.8 STM" },
+            { id: "1031", name: "Canon EF-M 22mm f/2 STM" },
+            { id: "1032", name: "Canon EF-S 18-55mm f/3.5-5.6 IS STM" },
+            { id: "1033", name: "Canon EF-M 11-22mm f/4-5.6 IS STM" },
+            { id: "1034", name: "Canon EF-S 55-250mm f/4-5.6 IS STM" },
+            { id: "1035", name: "Canon EF-M 55-200mm f/4.5-6.3 IS STM" },
+            { id: "1036", name: "Canon EF-S 10-18mm f/4.5-5.6 IS STM" },
+            { id: "1038", name: "Canon EF 24-105mm f/3.5-5.6 IS STM" },
+            { id: "1039", name: "Canon EF-M 15-45mm f/3.5-6.3 IS STM" },
+            { id: "103A", name: "Canon EF-S 24mm f/2.8 STM" },
+            { id: "103B", name: "Canon EF-M 28mm f/3.5 Macro IS STM" },
+            { id: "103C", name: "Canon EF 50mm f/1.8 STM" },
+            { id: "9030", name: "Canon EF-S 18-135mm f/3.5-5.6 IS USM" }];
 
         async function readCanonEfLensInfo() {
             if (canonEfLensOperationInFlight) return;
@@ -2446,7 +2835,7 @@
 
         async function readAllCanonEfTables() {
             const definitions = [[0xD0, 11], [0xD1, 11], [0xD2, 11], [0xD3, 11], [0xD4, 6],
-                                 [0xD8, 11], [0xD9, 11], [0xDA, 11], [0xDB, 11], [0xDC, 6]];
+            [0xD8, 11], [0xD9, 11], [0xDA, 11], [0xDB, 11], [0xDC, 6]];
             const tables = [];
             for (const [opcode, length] of definitions) {
                 tables.push([opcode, await readCanonEfTable(opcode, length)]);
