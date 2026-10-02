@@ -7,9 +7,45 @@
     <title>Multi-Protocol Debug Console</title>
 
     <script src="EspSerial.js"></script>
+    <script src="SwdPins.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@alexaltea/capstone-js@3.0.5/dist/capstone.min.js"></script>
 
     <style>
+        #ioGpioCheckboxes {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+            gap: 8px;
+        }
+        .swd-pin {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            min-width: 0;
+            min-height: 42px;
+            padding: 6px 10px;
+            border: 1px solid #46505b;
+            border-radius: 8px;
+            background: #191e24;
+            color: #e5e7eb;
+            font-size: 12px;
+        }
+        .swd-pin.scanning { border-color: #56bda2; background: #17332d; }
+        .swd-pin.idle-low { border-color: #555; background: #000; }
+        .swd-pin.idle-high { border-color: #f87171; background: #b91c1c; }
+        .swd-pin label { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
+        .swd-pin input { accent-color: #56bda2; width: 14px; height: 14px; }
+        .swd-pin select { width: 96px; min-width: 96px; padding: 4px 2px; border: 0; border-radius: 4px; background: #272e36; color: #f0d38a; font: inherit; }
+        .swd-pin.idle-low select { background: #000; color: #fff; }
+        .swd-pin.idle-high select { background: #b91c1c; color: #fff; }
+        .swd-pin select:disabled { opacity: 0.35; color: #c7ced6; }
+        .swd-pin:focus-within { outline: 2px solid #56bda2; outline-offset: 2px; }
+        .swd-pin-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 10px; }
+        .swd-clock-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; font-size: 12px; }
+        .swd-clock-control input { width: 90px; padding: 4px 6px; box-sizing: border-box; border: 1px solid #46505b; border-radius: 4px; background: #272e36; color: #e5e7eb; font: inherit; }
+        .swd-clock-control select { max-width: 100%; padding: 4px 6px; box-sizing: border-box; border: 1px solid #46505b; border-radius: 4px; background: #272e36; color: #e5e7eb; font: inherit; }
+        #swdWriteMode { width: 180px; }
         * {
             margin: 0;
             padding: 0;
@@ -399,32 +435,44 @@
 
         .ap-tabs {
             display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-bottom: 10px;
+            gap: 0;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            border-bottom: 1px solid #2a3646;
+            margin-bottom: 0;
         }
 
         .ap-tab {
-            padding: 6px 10px;
-            border: 1px solid #38485c;
-            background: #0f1620;
+            flex: 0 0 auto;
+            padding: 10px 14px;
+            border: 0;
+            border-bottom: 3px solid transparent;
+            background: transparent;
             color: #d9e3ef;
-            border-radius: 999px;
+            border-radius: 0;
             cursor: pointer;
             font-family: inherit;
             font-size: 12px;
+            white-space: nowrap;
+            box-shadow: none;
+        }
+
+        .ap-tab:hover:not(:disabled) {
+            background: #18212d;
         }
 
         .ap-tab.active {
-            border-color: #5f7896;
-            background: #18212d;
-            box-shadow: 0 0 0 2px rgba(95, 120, 150, 0.2);
+            border-bottom-color: #72bfd9;
+            background: #0f1620;
+            color: #ffffff;
+            box-shadow: none;
         }
 
         .ap-panel {
             background: #0f1620;
             border: 1px solid #2a3646;
-            border-radius: 6px;
+            border-top: 0;
+            border-radius: 0 0 6px 6px;
             padding: 10px;
             font-family: inherit;
             font-size: 12px;
@@ -445,32 +493,43 @@
 
         .ap-subtabs {
             display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
+            gap: 0;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            border-bottom: 1px solid #2a3646;
             margin-top: 10px;
             margin-bottom: 8px;
         }
 
-        .ap-subtab {
-            padding: 6px 10px;
-            border: 1px solid #38485c;
-            background: #101720;
+        .ap-panel .ap-subtab {
+            flex: 0 0 auto;
+            padding: 8px 12px;
+            border: 0;
+            border-bottom: 3px solid transparent;
+            background: transparent;
             color: #d9e3ef;
-            border-radius: 999px;
+            border-radius: 0;
             cursor: pointer;
             font-family: inherit;
             font-size: 12px;
+            white-space: nowrap;
+            box-shadow: none;
         }
 
-        .ap-subtab.active {
-            border-color: #5f7896;
+        .ap-panel .ap-subtab.active {
+            border-bottom-color: #72bfd9;
             background: #18212d;
-            box-shadow: 0 0 0 2px rgba(95, 120, 150, 0.2);
+            color: #ffffff;
+            box-shadow: none;
         }
 
-        .ap-subtab:disabled {
+        .ap-panel .ap-subtab:disabled {
             opacity: 0.45;
             cursor: not-allowed;
+        }
+
+        .ap-panel .ap-subtab.active:disabled {
+            opacity: 0.8;
         }
 
         .ap-subpanel {
@@ -548,9 +607,11 @@
         }
 
         .hex-editor .hex-view {
-            max-height: none;
+            height: 420px;
+            max-height: 70vh;
             min-height: 260px;
             overflow: auto;
+            overscroll-behavior: contain;
             padding: 10px;
             font-family: inherit;
             font-size: 12px;
@@ -558,6 +619,61 @@
             line-height: 1.6;
             user-select: none;
             resize: vertical;
+        }
+
+        .memory-scan-map {
+            --memory-data: #3ac787;
+            --memory-zero: #ffffff;
+            --memory-ff: #247adf;
+            --memory-fault: #777777;
+            display: flex;
+            flex-direction: column;
+            max-width: 720px;
+            margin: 12px 0;
+        }
+
+        .memory-scan-map button {
+            display: grid;
+            grid-template-columns: 112px minmax(0, 1fr);
+            min-height: 44px;
+            min-width: 0;
+            width: 100%;
+            padding: 0;
+            text-align: left;
+            white-space: pre-line;
+            overflow-wrap: anywhere;
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+            box-shadow: none;
+        }
+
+        .memory-scan-segment {
+            align-self: stretch;
+            border: 1px solid #303740;
+            background: repeating-linear-gradient(135deg, transparent 0 5px, #77777755 5px 7px);
+        }
+
+        .memory-scan-label { padding: 5px 12px; align-self: center; }
+        .memory-scan-map button[data-context="true"] .memory-scan-label { opacity: 0.65; }
+        .memory-scan-map button:hover .memory-scan-segment { outline: 2px solid #ffffff; outline-offset: -2px; }
+        .memory-scan-map button[data-state="data"] .memory-scan-segment { background: var(--memory-data); }
+        .memory-scan-map button[data-state="zero"] .memory-scan-segment { background: var(--memory-zero); }
+        .memory-scan-map button[data-state="ff"] .memory-scan-segment { background: var(--memory-ff); }
+        .memory-scan-map button[data-state="mixed"] .memory-scan-segment { background: linear-gradient(90deg, var(--memory-zero) 50%, var(--memory-ff) 50%); }
+        .memory-scan-map button[data-state="fault"] .memory-scan-segment { background: var(--memory-fault); }
+        .memory-scan-map button[data-state="reading"] .memory-scan-segment { background: #e0bd46; }
+
+        .memory-scan-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+            font-size: 12px;
+        }
+
+        @media (max-width: 600px) {
+            .memory-scan-map button { grid-template-columns: 56px minmax(0, 1fr); }
+            .memory-scan-label { padding: 5px 8px; }
         }
 
         .hex-editor .hex-row {
@@ -837,7 +953,7 @@
                         <div>
                             <div style="margin-bottom: 8px; color: #d4deea; font-weight: 600;">Candidate GPIOs
                                 (SWD+SWC):</div>
-                            <div id="ioGpioCheckboxes" style="display: flex; gap: 12px; flex-wrap: wrap;"></div>
+                            <div id="ioGpioCheckboxes"></div>
                         </div>
                         <button id="btnRunSWDTest"
                             style="padding: 10px 20px; background: #1f2a38; color: #dbe4ef; border: 1px solid #334155; border-radius: 6px; cursor: pointer; font-weight: 700; align-self: flex-start; font-family: inherit;">Detect
@@ -3629,6 +3745,207 @@
             return code >= 0x20 && code <= 0x7E;
         }
 
+        class MemoryScanner {
+            constructor(opts) {
+                this.read = opts.read;
+                this.recover = opts.recover;
+                this.onUpdate = opts.onUpdate || (() => {});
+                this.running = false;
+                this.status = 'Ready';
+                this.results = new Map();
+                this.resultRuns = new Map();
+                this.dataRanges = new Set();
+                this.blockSize = 4096;
+                this.probes = 0;
+                this.counts = { data: 0, zero: 0, ff: 0, mixed: 0, fault: 0 };
+            }
+
+            stop() {
+                this.running = false;
+            }
+
+            getResult(base, size) {
+                const key = `${base}:${size}`;
+                let result = this.results.get(key);
+                if (!result) {
+                    const runs = this.resultRuns.get(size) || [];
+                    let lower = 0, upper = runs.length;
+                    while (lower < upper) {
+                        const middle = Math.floor((lower + upper) / 2);
+                        if (runs[middle].end <= base) lower = middle + 1;
+                        else upper = middle;
+                    }
+                    const run = runs[lower];
+                    if (run && base >= run.base && base + size <= run.end && (base - run.base) % size === 0) result = run.result;
+                }
+                return result && this.dataRanges.has(key) ? { ...result, containsData: true } : result;
+            }
+
+            recordResult(base, size, result) {
+                this.results.set(`${base}:${size}`, result);
+                if (!this.resultRuns.has(size)) this.resultRuns.set(size, []);
+                const runs = this.resultRuns.get(size);
+                const previous = runs[runs.length - 1];
+                if (previous && previous.end === base && previous.result.state === result.state &&
+                    previous.result.sampledBytes === result.sampledBytes && previous.result.requestedBytes === result.requestedBytes &&
+                    previous.result.error === result.error) {
+                    previous.end += size;
+                } else {
+                    runs.push({ base, end: base + size, result: { ...result } });
+                }
+                if (this.results.size > 8192) this.results.delete(this.results.keys().next().value);
+            }
+
+            getVisibleRanges(base, size, maxRows = 256, initialRanges = null) {
+                const ranges = initialRanges ? initialRanges.map(range => ({ ...range })) : [];
+                const step = Math.min(size, Math.max(this.blockSize, size / 16));
+                if (!initialRanges) {
+                    for (let address = base; address < base + size; address += step) {
+                        ranges.push({ base: address, size: Math.min(step, base + size - address), depth: 0 });
+                    }
+                }
+                for (let index = 0; index < ranges.length; index++) {
+                    const range = ranges[index];
+                    const result = this.getResult(range.base, range.size) || range.sample;
+                    if (range.size <= this.blockSize || !result || (!result.containsData && result.state !== 'data')) continue;
+                    const childSize = Math.max(this.blockSize, range.size / 16);
+                    const childCount = Math.ceil(range.size / childSize);
+                    if (ranges.length + childCount - 1 > maxRows) continue;
+                    const children = [];
+                    for (let address = range.base; address < range.base + range.size; address += childSize) {
+                        const sample = address === range.base && result.sampledBytes > 0 && result.sampledBytes <= childSize
+                            ? { ...result, containsData: false } : undefined;
+                        children.push({ base: address, size: Math.min(childSize, range.base + range.size - address), depth: range.depth + 1, sample });
+                    }
+                    ranges.splice(index, 1, ...children);
+                    index--;
+                }
+                return ranges;
+            }
+
+            getMapSegments(base, size, maxRows = 256, initialRanges = null) {
+                const segments = [];
+                for (const range of this.getVisibleRanges(base, size, maxRows, initialRanges)) {
+                    const result = this.getResult(range.base, range.size) || range.sample;
+                    const reading = this.current && this.current.base >= range.base && this.current.base < range.base + range.size;
+                    const state = reading ? 'reading' : result ? result.containsData ? 'data' : result.state : 'unknown';
+                    const previous = segments[segments.length - 1];
+                    if (!initialRanges && previous && previous.base + previous.size === range.base && previous.state === state && state !== 'reading') {
+                        previous.size += range.size;
+                        previous.parts.push(range);
+                        previous.sampledBytes += result ? result.sampledBytes || 0 : 0;
+                        previous.containsData = previous.containsData || !!(result && result.containsData);
+                    } else {
+                        segments.push({ ...range, state, parts: [range], result,
+                            sampledBytes: result ? result.sampledBytes || 0 : 0,
+                            containsData: !!(result && result.containsData) });
+                    }
+                }
+                return segments;
+            }
+
+            getMapView(base, size, maxRows = 256, initialRanges = null) {
+                if (base === 0 && size === 0x100000000 && !initialRanges) return this.getMapSegments(base, size, maxRows);
+                const end = base + size;
+                const before = [], after = [];
+                for (const segment of this.getMapSegments(0, 0x100000000, maxRows)) {
+                    const segmentEnd = segment.base + segment.size;
+                    const addContext = (start, finish, target) => {
+                        if (start >= finish) return;
+                        const partial = start !== segment.base || finish !== segmentEnd;
+                        const result = partial ? start === segment.base && segment.result
+                            ? { ...segment.result, containsData: false } : this.getResult(start, finish - start) : segment.result;
+                        const reading = this.current && this.current.base >= start && this.current.base < finish;
+                        target.push({ ...segment, base: start, size: finish - start, context: true,
+                            result, containsData: !partial && segment.containsData,
+                            state: reading ? 'reading' : partial ? result ? result.state : 'unknown' : segment.state,
+                            parts: [{ base: start, size: finish - start, depth: 0 }],
+                            sampledBytes: partial ? result ? result.sampledBytes || 0 : 0 : segment.sampledBytes });
+                    };
+                    addContext(segment.base, Math.min(segmentEnd, base), before);
+                    addContext(Math.max(segment.base, end), segmentEnd, after);
+                }
+                return [...before, ...this.getMapSegments(base, size, maxRows, initialRanges), ...after];
+            }
+
+            async scan(base = 0, size = 0x100000000, blockSize = 4096) {
+                if (this.busy) throw new Error('Memory scan already running');
+                if (![256, 1024, 4096, 65536].includes(blockSize)) throw new Error('Invalid scan block size');
+                if (!Number.isSafeInteger(base) || !Number.isSafeInteger(size) || base < 0 || size < 4 ||
+                    base % 4 || size % 4 || base + size > 0x100000000) throw new Error('Invalid scan range');
+                this.busy = true;
+                this.running = true;
+                this.status = 'Scanning';
+                this.blockSize = blockSize;
+                this.results.clear();
+                this.resultRuns.clear();
+                this.dataRanges.clear();
+                this.probes = 0;
+                this.counts = { data: 0, zero: 0, ff: 0, mixed: 0, fault: 0 };
+                const levels = [];
+                try {
+                    for (let regionSize = Math.max(blockSize, size / 16); ; regionSize = Math.max(blockSize, regionSize / 16)) {
+                        regionSize = Math.min(size, regionSize);
+                        this.levelSize = regionSize;
+                        levels.push(regionSize);
+                        this.levelTotal = Math.ceil(size / regionSize);
+                        this.levelDone = 0;
+                        for (let address = base; address < base + size && this.running; address += regionSize) {
+                            const length = Math.min(regionSize > blockSize ? 64 : blockSize, base + size - address);
+                            const key = `${address}:${Math.min(regionSize, base + size - address)}`;
+                            this.current = { base: address, size: Math.min(regionSize, base + size - address) };
+                            this.onUpdate(this);
+                            let result;
+                            try {
+                                const words = await this.read(address, length / 4);
+                                if (words.length !== length / 4) throw new Error('Short memory scan read');
+                                let zero = true, ff = true, data = false;
+                                for (const word of words) {
+                                    zero = zero && (word >>> 0) === 0;
+                                    ff = ff && (word >>> 0) === 0xFFFFFFFF;
+                                    for (let shift = 0; shift < 32; shift += 8) {
+                                        const byte = (word >>> shift) & 0xFF;
+                                        if (byte !== 0 && byte !== 0xFF) data = true;
+                                    }
+                                }
+                                result = { state: zero ? 'zero' : ff ? 'ff' : data ? 'data' : 'mixed', sampledBytes: length };
+                            } catch (error) {
+                                if (!/ACK=4\b|\bFAULT\b/.test(error.message)) throw error;
+                                result = { state: 'fault', sampledBytes: 0, requestedBytes: length, error: error.message };
+                                await this.recover();
+                            }
+                            this.recordResult(address, this.current.size, result);
+                            if (result.state === 'data') {
+                                for (const parentSize of levels.slice(0, -1)) {
+                                    const parentBase = base + Math.floor((address - base) / parentSize) * parentSize;
+                                    const parentKey = `${parentBase}:${Math.min(parentSize, base + size - parentBase)}`;
+                                    this.dataRanges.add(parentKey);
+                                    const parent = this.results.get(parentKey);
+                                    if (parent) parent.containsData = true;
+                                }
+                            }
+                            this.probes++;
+                            this.counts[result.state]++;
+                            this.levelDone++;
+                            this.current = null;
+                            this.onUpdate(this);
+                            if ((this.probes & 15) === 0) await new Promise(resolve => setTimeout(resolve, 0));
+                        }
+                        if (!this.running || regionSize <= blockSize) break;
+                    }
+                    this.status = this.running ? 'Complete' : 'Stopped';
+                } catch (error) {
+                    this.status = 'Failed';
+                    throw error;
+                } finally {
+                    this.running = false;
+                    this.busy = false;
+                    this.current = null;
+                    this.onUpdate(this);
+                }
+            }
+        }
+
         class HexEditor {
             constructor(opts = {}) {
                 this.bytesPerRow = opts.bytesPerRow || 16;
@@ -3636,6 +3953,10 @@
                 this.data = new Uint8Array(0);
                 this.onChange = opts.onChange || null;
                 this.onModeChange = opts.onModeChange || null;
+                this.onReadRange = opts.onReadRange || null;
+                this.onReadError = opts.onReadError || null;
+                this._loadingRange = false;
+                this._maxWindowBytes = 16384;
                 this.editMode = 'byte';
                 /* Dirty tracking is per-byte. UI/write-back can group bytes into
                  * 8/16/32-bit regions depending on selected width.
@@ -3725,6 +4046,20 @@
 
                 const view = document.createElement('div');
                 view.className = 'hex-view';
+                view.addEventListener('scroll', () => {
+                    if (view.scrollTop > 0 && view.scrollTop + view.clientHeight >= view.scrollHeight - 2) {
+                        this._loadMore(1);
+                    }
+                });
+                view.addEventListener('wheel', (event) => {
+                    const direction = Math.sign(event.deltaY);
+                    const atEdge = direction < 0 ? view.scrollTop <= 0 :
+                        view.scrollTop + view.clientHeight >= view.scrollHeight - 2;
+                    if (direction && atEdge && this.data.length && this.onReadRange) {
+                        event.preventDefault();
+                        this._loadMore(direction);
+                    }
+                }, { passive: false });
 
                 root.appendChild(toolbar);
                 root.appendChild(view);
@@ -3748,6 +4083,46 @@
                 this._dirtyBytes = new Uint8Array(this.data.length);
                 this._dirtyCount = 0;
                 this._renderView();
+            }
+
+            async _loadMore(direction) {
+                if (this._loadingRange || !this.onReadRange || !this.data.length) return;
+                if (this.isDirty()) {
+                    if (this.onReadError) this.onReadError(new Error('Write back pending hex edits before loading more memory'));
+                    return;
+                }
+                const end = this.baseAddr + this.data.length;
+                const length = Math.min(1024, direction < 0 ? this.baseAddr : 0x100000000 - end);
+                if (length <= 0) return;
+                const address = direction < 0 ? this.baseAddr - length : end;
+                const originalData = this.data;
+                const originalBase = this.baseAddr;
+                const view = this._view;
+                const scrollTop = view ? view.scrollTop : 0;
+                const rowHeight = view && view.querySelector('.hex-row') ?
+                    view.querySelector('.hex-row').getBoundingClientRect().height : 19.2;
+                this._loadingRange = true;
+                try {
+                    const bytes = new Uint8Array(await this.onReadRange(address, length));
+                    if (this.data !== originalData || this.baseAddr !== originalBase || this.isDirty()) return;
+                    if (bytes.length !== length) throw new Error('Short memory read while scrolling');
+                    const joined = new Uint8Array(this.data.length + length);
+                    joined.set(direction < 0 ? bytes : this.data);
+                    joined.set(direction < 0 ? this.data : bytes, direction < 0 ? length : this.data.length);
+                    const excess = Math.max(0, joined.length - this._maxWindowBytes);
+                    const removedTop = direction > 0 ? excess : 0;
+                    this.data = joined.slice(removedTop, joined.length - (direction < 0 ? excess : 0));
+                    this.baseAddr = address - (direction > 0 ? this.data.length - length : 0);
+                    this._dirtyBytes = new Uint8Array(this.data.length);
+                    this._selIndex = null;
+                    this._selNibble = null;
+                    this._renderView();
+                    if (view) view.scrollTop = scrollTop + ((direction < 0 ? length : -removedTop) / this.bytesPerRow) * rowHeight;
+                } catch (error) {
+                    if (this.onReadError) this.onReadError(error);
+                } finally {
+                    this._loadingRange = false;
+                }
             }
 
             isDirty() {
@@ -4324,13 +4699,9 @@
                 throw new Error('dpWrite: too many WAIT retries');
             }
 
-            async clearStickyErrors() {
-                /* ABORT bits: clear STKCMP/STKERR/WDERR/ORUNERR (best-effort) */
-                try {
-                    await this.dpWrite(DP_A23_ABORT, 0x1E);
-                } catch (e) {
-                    /* ignore */
-                }
+            async clearStickyErrors(abortPending = false) {
+                // Propagate failed ABORTs so initialization cannot report success.
+                await this.dpWrite(DP_A23_ABORT, abortPending ? 0x1F : 0x1E);
             }
 
             async ensurePowerUp(timeoutMs = 800) {
@@ -4346,11 +4717,7 @@
                  * Note: writing DP SELECT from the host is safe in this firmware; it explicitly
                  * invalidates/updates the cached SELECT value.
                  */
-                try {
-                    await this.dpWrite(DP_A23_SELECT, 0);
-                } catch (e) {
-                    /* ignore and keep trying below */
-                }
+                await this.dpWrite(DP_A23_SELECT, 0);
 
                 const start = performance.now();
                 let last = 0;
@@ -4363,7 +4730,8 @@
                     const haveAck = ((last & (CSYSPWRUPACK | CDBGPWRUPACK)) === (CSYSPWRUPACK | CDBGPWRUPACK));
 
                     if (!haveReq) {
-                        const v = (last | want) >>> 0;
+                        // Write request bits only: do not echo sticky/W1C status bits.
+                        const v = want;
                         await this.dpWrite(DP_A23_CTRLSTAT, v);
                         await new Promise(r => setTimeout(r, 20));
                         continue;
@@ -4376,7 +4744,7 @@
                     await new Promise(r => setTimeout(r, 20));
                 }
 
-                return { ok: false, ctrlstat: last >>> 0 };
+                throw new Error(`DP power-up timeout: CTRL/STAT=${u32ToHex(last)}`);
             }
 
             async postDetectInit(opts = {}) {
@@ -4385,10 +4753,9 @@
                 const allowRecover = (opts && opts.allowRecover !== undefined) ? !!opts.allowRecover : true;
 
                 const tryOnce = async () => {
+                    await this.clearStickyErrors(true);
                     const pu = await this.ensurePowerUp(timeoutMs);
                     this._trace(trace, `DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
-                    await this.clearStickyErrors();
-                    await this.flushRdbuff();
                     return pu;
                 };
 
@@ -4433,6 +4800,9 @@
                 const dpidr = await this.transferRaw(false, false, DP_A23_ABORT, 0);
                 lines.push(`DP DPIDR/IDCODE: ack=${this.ackName(dpidr.ack)} value=${u32ToHex(dpidr.value)}`);
 
+                // SELECT is synchronized with the firmware cache by raw transfers.
+                const select = await this.transferRaw(false, true, DP_A23_SELECT, 0);
+                lines.push(`DP SELECT(0): ack=${this.ackName(select.ack)}`);
                 const ctrl0 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
                 lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl0.ack)} value=${u32ToHex(ctrl0.value)}`);
 
@@ -4445,15 +4815,12 @@
                 }
 
                 const abort = await this.transferRaw(false, true, DP_A23_ABORT, 0x1E);
-                lines.push(`DP ABORT(0x1E): ack=${this.ackName(abort.ack)} (firmware may force OK)`);
+                lines.push(`DP ABORT(0x1E): ack=${this.ackName(abort.ack)} (old firmware may force OK)`);
 
                 const ctrl1 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
                 lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl1.ack)} value=${u32ToHex(ctrl1.value)} (banked)`);
 
-                /* Do not write DP SELECT here.
-                 * The firmware caches SELECT and may skip rewriting it; if the host changes SELECT behind its back,
-                 * subsequent AP reads can silently access the wrong AP/Bank and return zeros with ACK=OK.
-                 */
+                // Raw SELECT writes update the firmware's SELECT cache.
 
                 /* Use the same safe AP helpers (SELECT+RDBUFF handling) for debug probing. */
                 try {
@@ -4505,15 +4872,23 @@
                 this.log(`SWD link recovery: re-detecting pins${msg}...`, 'info');
                 const det = await this.detectPins(this.lastIoMask, this.lastVerbose);
                 this.log(`SWD link recovery: DPIDR=${u32ToHex(det.dpidr)} ok=${det.dpidr_ok ? 1 : 0}`, 'info');
+                if (!det.dpidr_ok || !det.detected_device) {
+                    throw new Error('SWD link recovery: target not detected');
+                }
                 const skipPostInit = !!(opts && opts.skipPostInit);
                 if (!skipPostInit) {
-                    try {
-                        await this.postDetectInit({ timeoutMs: 1200, allowRecover: false });
-                    } catch (e) {
-                        /* ignore */
-                    }
+                    await this.postDetectInit({ timeoutMs: 1200, allowRecover: false });
                 }
                 return det;
+            }
+
+            async recoverDp(reason = '') {
+                const msg = reason ? ` (${reason})` : '';
+                this.log(`SWD DP recovery: clearing sticky state${msg}...`, 'info');
+                await this.clearStickyErrors(true);
+                await this.ensurePowerUp(1200);
+                this.log('SWD DP recovery: complete; pins were not re-detected', 'info');
+                return true;
             }
 
             _trace(enabled, message) {
@@ -4688,13 +5063,9 @@
                 /* Best-effort: clear sticky flags before scanning. */
                 await this.clearStickyErrors();
 
-                /* Cold start often needs explicit power-up request before AP reads. */
-                try {
-                    const pu = await this.ensurePowerUp(800);
-                    this._trace(trace, `DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
-                } catch (e) {
-                    this._trace(trace, `DP power-up: ERROR: ${e.message}`);
-                }
+                // AP results are meaningful only after DP initialization succeeds.
+                const pu = await this.ensurePowerUp(800);
+                this._trace(trace, `DP power-up: ok=1 CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
 
                 const aps = [];
                 let badAckRecoveries = 0;
@@ -4780,14 +5151,17 @@
                     try {
                         await this.apWriteStrict(ap, MEMAP_CSW, csw);
                         await this.apWriteStrict(ap, MEMAP_TAR, base);
-                        /* dummy read */
-                        await this.apReadStrict(ap, MEMAP_DRW, true);
+                        // Firmware already completes AP reads through DP RDBUFF.
                         const v = await this.apReadStrict(ap, MEMAP_DRW, true);
                         return v >>> 0;
                     } catch (e) {
                         const msg = (e && e.message) ? e.message : String(e);
                         if (attempt < 2) {
-                            await this.recoverLink(`memRead32Via restart (${msg})`);
+                            if (msg.includes('SWD bad ACK=4') || msg.includes('SWD FAULT')) {
+                                await this.recoverDp(`MEM-AP read fault (${msg})`);
+                            } else {
+                                await this.recoverLink(`memRead32Via restart (${msg})`);
+                            }
                             await this.flushRdbuff();
                             await new Promise(r => setTimeout(r, 20));
                             continue;
@@ -4800,85 +5174,37 @@
             }
 
             async memReadBlock32Via(ap, address, words) {
-                const csw = 0x23000012;
                 const base = address >>> 0;
                 const count = words >>> 0;
-
-                /* C-like behavior: if anything goes wrong mid-block, restart the whole block.
-                 * This avoids partial results / word shifts after recover.
-                 */
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    const temp = [];
-                    try {
-                        /* Some targets/peripherals effectively behave like DRW returns the first word
-                         * immediately (no observable dummy read needed), while others require the classic
-                         * MEM-AP priming read.
-                         *
-                         * To avoid the common "first word skipped" symptom, take a reference word0 via
-                         * non-incrementing single read, then decide whether the first DRW read already
-                         * equals word0.
-                         */
-                        let ref0 = null;
-                        try {
-                            ref0 = await this.memRead32Via(ap, base);
-                        } catch (e) {
-                            ref0 = null;
-                        }
-
-                        await this.apWriteStrict(ap, MEMAP_CSW, csw);
-                        await this.apWriteStrict(ap, MEMAP_TAR, base);
-
-                        if (count === 0) return [];
-
-                        const r0 = await this.apReadStrict(ap, MEMAP_DRW, true);
-                        if (count === 1) {
-                            if (ref0 !== null && (r0 >>> 0) === (ref0 >>> 0)) {
-                                return [r0 >>> 0];
-                            }
-                            const r1 = await this.apReadStrict(ap, MEMAP_DRW, true);
-                            return [r1 >>> 0];
-                        }
-
-                        const r1 = await this.apReadStrict(ap, MEMAP_DRW, true);
-
-                        const r0IsWord0 = (ref0 !== null) && ((r0 >>> 0) === (ref0 >>> 0));
-                        if (r0IsWord0) {
-                            temp.push(r0 >>> 0);
-                            temp.push(r1 >>> 0);
-                            for (let i = 2; i < count; i++) {
-                                const v = await this.apReadStrict(ap, MEMAP_DRW, true);
-                                temp.push(v >>> 0);
-                            }
-                        } else {
-                            /* Treat r0 as dummy/priming, and r1 as word0 */
-                            temp.push(r1 >>> 0);
-                            for (let i = 1; i < count; i++) {
-                                const v = await this.apReadStrict(ap, MEMAP_DRW, true);
-                                temp.push(v >>> 0);
-                            }
-                        }
-                        return temp;
-                    } catch (e) {
-                        const msg = (e && e.message) ? e.message : String(e);
-                        if (attempt < 2) {
-                            await this.recoverLink(`memReadBlock32Via restart (${msg})`);
-                            await this.flushRdbuff();
-                            await new Promise(r => setTimeout(r, 30));
-                            continue;
-                        }
-                        throw e;
+                if ((base & 3) !== 0) throw new Error('memReadBlock32Via: unaligned address');
+                if (count === 0) return [];
+                // Each firmware AP helper returns the completed result, not a dummy.
+                // Use the guaranteed 1 KiB TAR window even on APs with larger windows.
+                await this.apWriteStrict(ap, MEMAP_CSW, 0x23000012);
+                const result = [];
+                for (let i = 0; i < count; i++) {
+                    const addr = (base + i * 4) >>> 0;
+                    if (i === 0 || (addr & 0x3FF) === 0) {
+                        await this.apWriteStrict(ap, MEMAP_TAR, addr);
                     }
+                    result.push((await this.apReadStrict(ap, MEMAP_DRW, true)) >>> 0);
                 }
-
-                throw new Error('memReadBlock32Via: unreachable');
+                return result;
             }
 
             async memWriteBlock32Via(ap, address, words) {
                 const csw = 0x23000012;
-                await this.apWrite(ap, MEMAP_CSW, csw);
-                await this.apWrite(ap, MEMAP_TAR, address >>> 0);
+                if ((address & 3) !== 0) throw new Error('memWriteBlock32Via: unaligned address');
+                if (!words.length) return true;
+                await this.apWriteStrict(ap, MEMAP_CSW, csw);
+                await this.apWriteStrict(ap, MEMAP_TAR, address >>> 0);
                 for (let i = 0; i < words.length; i++) {
-                    await this.apWrite(ap, MEMAP_DRW, (words[i] >>> 0));
+                    const current = ((address >>> 0) + i * 4) >>> 0;
+                    if (i > 0 && (current & 0x3FF) === 0) {
+                        await this.apWriteStrict(ap, MEMAP_TAR, current);
+                    }
+                    await this.apWriteStrict(ap, MEMAP_DRW, (words[i] >>> 0));
+                    await this.completeMemWrite();
                 }
                 return true;
             }
@@ -4887,10 +5213,16 @@
                 const csw = 0x23000011;
                 const addr = address >>> 0;
                 if ((addr & 1) !== 0) throw new Error('memWriteBlock16Via: unaligned address');
-                await this.apWrite(ap, MEMAP_CSW, csw);
-                await this.apWrite(ap, MEMAP_TAR, addr);
+                if (!halfwords.length) return true;
+                await this.apWriteStrict(ap, MEMAP_CSW, csw);
+                await this.apWriteStrict(ap, MEMAP_TAR, addr);
                 for (let i = 0; i < halfwords.length; i++) {
-                    await this.apWrite(ap, MEMAP_DRW, (halfwords[i] & 0xFFFF) >>> 0);
+                    const current = ((address >>> 0) + i * 2) >>> 0;
+                    if (i > 0 && (current & 0x3FF) === 0) {
+                        await this.apWriteStrict(ap, MEMAP_TAR, current);
+                    }
+                    await this.apWriteStrict(ap, MEMAP_DRW, ((halfwords[i] & 0xFFFF) << ((current & 2) * 8)) >>> 0);
+                    await this.completeMemWrite();
                 }
                 return true;
             }
@@ -4898,37 +5230,42 @@
             async memWriteBlock8Via(ap, address, bytes) {
                 const csw = 0x23000010;
                 const addr = address >>> 0;
-                await this.apWrite(ap, MEMAP_CSW, csw);
-                await this.apWrite(ap, MEMAP_TAR, addr);
+                if (!bytes.length) return true;
+                await this.apWriteStrict(ap, MEMAP_CSW, csw);
+                await this.apWriteStrict(ap, MEMAP_TAR, addr);
                 for (let i = 0; i < bytes.length; i++) {
-                    await this.apWrite(ap, MEMAP_DRW, (bytes[i] & 0xFF) >>> 0);
+                    const current = ((address >>> 0) + i * 1) >>> 0;
+                    if (i > 0 && (current & 0x3FF) === 0) {
+                        await this.apWriteStrict(ap, MEMAP_TAR, current);
+                    }
+                    await this.apWriteStrict(ap, MEMAP_DRW, ((bytes[i] & 0xFF) << ((current & 3) * 8)) >>> 0);
+                    await this.completeMemWrite();
                 }
                 return true;
+            }
+
+            async completeMemWrite() {
+                try {
+                    await this.dpRead(DP_A23_RDBUFF);
+                } catch (error) {
+                    try {
+                        await this.clearStickyErrors(true);
+                    } catch (recoveryError) {
+                        this.log(`SWD write cleanup failed: ${recoveryError.message}`, 'error');
+                    }
+                    throw error;
+                }
             }
 
             async memWrite32Via(ap, address, value) {
                 const csw = 0x23000002;
                 const base = address >>> 0;
-
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    try {
-                        await this.apWriteStrict(ap, MEMAP_CSW, csw);
-                        await this.apWriteStrict(ap, MEMAP_TAR, base);
-                        await this.apWriteStrict(ap, MEMAP_DRW, value >>> 0);
-                        return true;
-                    } catch (e) {
-                        const msg = (e && e.message) ? e.message : String(e);
-                        if (attempt < 2) {
-                            await this.recoverLink(`memWrite32Via restart (${msg})`);
-                            await this.flushRdbuff();
-                            await new Promise(r => setTimeout(r, 20));
-                            continue;
-                        }
-                        throw e;
-                    }
-                }
-
-                throw new Error('memWrite32Via: unreachable');
+                if ((base & 3) !== 0) throw new Error('memWrite32Via: unaligned address');
+                await this.apWriteStrict(ap, MEMAP_CSW, csw);
+                await this.apWriteStrict(ap, MEMAP_TAR, base);
+                await this.apWriteStrict(ap, MEMAP_DRW, value >>> 0);
+                await this.completeMemWrite();
+                return true;
             }
 
             async coreHaltVia(ap) {
@@ -5123,8 +5460,13 @@
                 return;
             }
 
+            const scanMask = swdPins.masks().scan;
+            if (!scanMask || !(scanMask & (scanMask - 1))) {
+                logToConsole('Select at least two scan GPIOs for SWDIO and SWCLK', 'error');
+                return;
+            }
             try {
-                await espSerial.setGatewayMode('SWD');
+                await swdPins.apply();
             } catch (e) {
                 logToConsole(`Failed to enter SWD mode: ${e.message}`, 'error');
                 return;
@@ -5146,14 +5488,26 @@
             const sleep = (ms) => new Promise(r => setTimeout(r, ms | 0));
 
             try {
-                const ioMask = calculateMaskFromCheckboxes('ioGpioCheckboxes');
                 const verbose = !!(document.getElementById('chkVerboseSwd') && document.getElementById('chkVerboseSwd').checked);
 
-                if (!swd) {
-                    swd = new Swd(espSerial, logToConsole);
-                }
-
                 while (detectLoopActive && myToken === detectLoopToken) {
+                    const pinRevision = swdPins.revision;
+                    try {
+                        await swdPins.pending;
+                    } catch (error) {
+                        if (pinRevision !== swdPins.revision) continue;
+                        logToConsole(`Pin update failed: ${error.message}`, 'error');
+                        detectLoopActive = false;
+                        return;
+                    }
+                    if (!detectLoopActive || myToken !== detectLoopToken) return;
+                    if (pinRevision !== swdPins.revision) continue;
+                    const ioMask = swdPins.masks().scan;
+                    if (!ioMask || !(ioMask & (ioMask - 1))) {
+                        await sleep(250);
+                        continue;
+                    }
+                    if (!swd) swd = new Swd(espSerial, logToConsole);
                     let det = null;
                     try {
                         /* Quiet cycling: don't ask firmware to be verbose. */
@@ -5162,6 +5516,9 @@
                         await sleep(250);
                         continue;
                     }
+
+                    if (!detectLoopActive || myToken !== detectLoopToken) return;
+                    if (pinRevision !== swdPins.revision) continue;
 
                     if (!det || !det.detected_device || !det.dpidr_ok) {
                         await sleep(250);
@@ -5176,12 +5533,9 @@
                         playTadaa();
                     }
 
-                    /* Optional: re-run detect once with user verbosity. */
-                    try {
-                        det = await swd.detectPins(ioMask, verbose);
-                    } catch (e) {
-                        /* keep prior det */
-                    }
+                    // Keep the successful detection; changing log verbosity must
+                    // not issue another hardware scan or reset the live SW-DP.
+                    swd.lastVerbose = !!verbose;
 
                     const pinsEl = document.getElementById('detectedPins');
                     const idsEl = document.getElementById('detectedIds');
@@ -5201,6 +5555,9 @@
                         logToConsole(`DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`, pu.ok ? 'info' : 'error');
                     } catch (e) {
                         logToConsole(`DP power-up: ERROR: ${e.message}`, 'error');
+                        logToConsole('DP initialization failed; use DP Debug to inspect the link.', 'error');
+                        if (scanBtn) scanBtn.disabled = true;
+                        return;
                     }
 
                     logToConsole('Ready: click DP Debug, then Scan APs', 'info');
@@ -5351,7 +5708,7 @@
                 lastMemWordsText = wordsEl.value;
 
                 const addr = parseHexOrDec(addrEl.value);
-                const words = Math.max(1, Math.min(256, parseHexOrDec(wordsEl.value) || 16));
+                const words = Math.max(1, Math.min(1024, parseHexOrDec(wordsEl.value) || 16));
                 const useBlock = !!(useBlkEl && useBlkEl.checked);
                 lastMemUseBlockRead = useBlock;
                 if (activeAp === null || activeAp === undefined) {
@@ -5472,15 +5829,18 @@
             };
             const pageInfo = mkPage();
             const pageHex = mkPage();
+            const pageMemoryScan = mkPage();
             const pageCoresight = mkPage();
             const pageDebug = mkPage();
             pages.set('info', pageInfo);
             pages.set('hex', pageHex);
+            pages.set('memory-scan', pageMemoryScan);
             pages.set('coresight', pageCoresight);
             pages.set('debug', pageDebug);
 
             panelEl.appendChild(pageInfo);
             panelEl.appendChild(pageHex);
+            panelEl.appendChild(pageMemoryScan);
             panelEl.appendChild(pageCoresight);
             panelEl.appendChild(pageDebug);
 
@@ -5521,6 +5881,7 @@
 
             addSubTab('info', 'Info', true);
             addSubTab('hex', 'Hex dump', isMem);
+            addSubTab('memory-scan', 'Memory scan', isMem);
             addSubTab('coresight', 'CoreSight', isMem);
             addSubTab('debug', 'Debugging', isMem);
 
@@ -5625,6 +5986,135 @@
             pageInfo.appendChild(apInfoBox);
 
             if (isMem) {
+                const scanOptions = document.createElement('div');
+                scanOptions.className = 'row';
+                const blockLabel = document.createElement('label');
+                blockLabel.textContent = 'Block size: ';
+                const blockSelect = document.createElement('select');
+                blockSelect.id = 'memoryScanBlockSize';
+                for (const [value, text] of [[256, '256 B'], [1024, '1 KiB'], [4096, '4 KiB'], [65536, '64 KiB']]) {
+                    const option = document.createElement('option');
+                    option.value = String(value);
+                    option.textContent = text;
+                    blockSelect.appendChild(option);
+                }
+                blockSelect.value = '4096';
+                blockLabel.appendChild(blockSelect);
+                const scanStart = document.createElement('button');
+                scanStart.textContent = 'Scan all';
+                const scanScope = document.createElement('button');
+                scanScope.textContent = 'Scan range';
+                const scanStop = document.createElement('button');
+                scanStop.textContent = 'Stop';
+                scanStop.disabled = true;
+                scanOptions.append(blockLabel, scanStart, scanScope, scanStop);
+                const scanBreadcrumbs = document.createElement('div');
+                scanBreadcrumbs.className = 'row';
+                const scanStatus = document.createElement('div');
+                scanStatus.setAttribute('role', 'status');
+                const scanLegend = document.createElement('div');
+                scanLegend.className = 'memory-scan-legend';
+                for (const [text, color] of [['Data', '#3ac787'], ['00', '#ffffff'], ['FF', '#247adf'],
+                    ['Mixed 00/FF', 'linear-gradient(90deg, #ffffff 50%, #247adf 50%)'], ['No access', '#777777'],
+                    ['Unprobed', 'repeating-linear-gradient(135deg, transparent 0 5px, #77777755 5px 7px)']]) {
+                    const entry = document.createElement('span');
+                    entry.textContent = text;
+                    const swatch = document.createElement('span');
+                    swatch.style.cssText = 'display:inline-block;width:12px;height:12px;margin-right:6px;border:1px solid #303740;vertical-align:middle';
+                    swatch.style.background = color;
+                    entry.prepend(swatch);
+                    scanLegend.appendChild(entry);
+                }
+                const scanMap = document.createElement('div');
+                scanMap.className = 'memory-scan-map';
+                pageMemoryScan.append(scanOptions, scanBreadcrumbs, scanStatus, scanMap, scanLegend);
+                const scanPath = [{ base: 0, size: 0x100000000 }];
+                let scanTask = null;
+                let openingMemoryRegion = false;
+                const stateNames = { data: 'Data', zero: '00', ff: 'FF', mixed: 'Mixed 00/FF', fault: 'Access error' };
+                const scanner = new MemoryScanner({
+                    read: (address, words) => swd.memReadBlock32Via(a.ap, address, words),
+                    recover: () => swd.clearStickyErrors(true),
+                    onUpdate: () => renderMemoryMap()
+                });
+                function renderMemoryMap() {
+                    scanMap.replaceChildren();
+                    scanBreadcrumbs.replaceChildren();
+                    scanPath.forEach((range, index) => {
+                        const crumb = document.createElement('button');
+                        crumb.textContent = index === 0 ? '4 GiB' : u32ToHex(range.base);
+                        crumb.onclick = () => { scanPath.splice(index + 1); renderMemoryMap(); };
+                        scanBreadcrumbs.appendChild(crumb);
+                    });
+                    const scope = scanPath[scanPath.length - 1];
+                    for (const range of scanner.getMapView(scope.base, scope.size, 256, scope.parts || null)) {
+                        const address = range.base;
+                        const size = range.size;
+                        const result = range.result;
+                        const reading = range.state === 'reading';
+                        const merged = range.parts.length > 1;
+                        const cell = document.createElement('button');
+                        cell.dataset.context = String(!!range.context);
+                        cell.dataset.depth = String(range.depth);
+                        cell.dataset.state = range.state;
+                        const segment = document.createElement('span');
+                        segment.className = 'memory-scan-segment';
+                        segment.setAttribute('aria-hidden', 'true');
+                        const label = document.createElement('span');
+                        label.className = 'memory-scan-label';
+                        const status = reading ? 'Reading' : range.state === 'unknown' ? 'Unprobed' : range.containsData ? 'Data in subranges' : 'Sample: ' + stateNames[range.state];
+                        label.textContent = `${u32ToHex(address)} - ${u32ToHex(address + size - 1)}\n${status}${merged ? ' (' + range.parts.length + ' ranges)' : ''}${range.context ? ' | Overview' : ''}`;
+                        cell.append(segment, label);
+                        cell.title = merged ? `${range.parts.length} adjacent ranges; ${range.sampledBytes} bytes sampled${range.state === 'fault' ? '; Access errors' : ''}` : result ? `${result.state === 'fault' ? result.requestedBytes + ' bytes requested' : result.sampledBytes + ' bytes sampled'} at ${u32ToHex(address)}${result.error ? ': ' + result.error : ''}` : 'No retained sample';
+                        cell.onclick = async () => {
+                            if (openingMemoryRegion) return;
+                            openingMemoryRegion = true;
+                            try {
+                                if (scanner.busy) {
+                                    scanner.stop();
+                                    await scanTask;
+                                }
+                                await selectSubTab('hex');
+                                document.getElementById('memAddrInput').value = u32ToHex(address);
+                                document.getElementById('memWordsInput').value = String(Math.min(1024, size / 4));
+                                await doReadBlock();
+                            } catch (error) {
+                                showToast(error.message, 'error');
+                            } finally {
+                                openingMemoryRegion = false;
+                            }
+                        };
+                        scanMap.appendChild(cell);
+                    }
+                    const counts = scanner.counts;
+                    scanStatus.textContent = `${scanner.status} | ${scanner.probes} probes | Level: ${scanner.levelDone || 0}/${scanner.levelTotal || 16} | Data ${counts.data}, 00 ${counts.zero}, FF ${counts.ff}, mixed ${counts.mixed}, errors ${counts.fault}`;
+                }
+                async function runMemoryScan(all) {
+                    if (scanner.busy) return;
+                    const scope = all ? scanPath[0] : scanPath[scanPath.length - 1];
+                    const controls = [...document.querySelectorAll('button, input, select')]
+                        .filter(control => !pageMemoryScan.contains(control) && control.id !== 'disconnectBtn');
+                    const disabled = controls.map(control => control.disabled);
+                    controls.forEach(control => { control.disabled = true; });
+                    scanStart.disabled = scanScope.disabled = blockSelect.disabled = true;
+                    scanStop.disabled = false;
+                    try {
+                        scanTask = scanner.scan(scope.base, scope.size, Number(blockSelect.value));
+                        await scanTask;
+                    } catch (error) {
+                        logToConsole(`AP${a.ap} memory scan: ${error.message}`, 'error');
+                        showToast(error.message, 'error');
+                    } finally {
+                        scanTask = null;
+                        controls.forEach((control, index) => { control.disabled = disabled[index]; });
+                        scanStart.disabled = scanScope.disabled = blockSelect.disabled = false;
+                        scanStop.disabled = true;
+                    }
+                }
+                scanStart.onclick = () => runMemoryScan(true);
+                scanScope.onclick = () => runMemoryScan(false);
+                scanStop.onclick = () => scanner.stop();
+                renderMemoryMap();
                 /* ============ Hex dump tab ============ */
                 const memHdr = document.createElement('div');
                 memHdr.style.marginTop = '10px';
@@ -5647,8 +6137,20 @@
                 b32.textContent = 'Read32';
                 b32.onclick = doRead32;
 
+                const bRecover = document.createElement('button');
+                bRecover.id = 'btnRecoverDp';
+                bRecover.textContent = 'Recover DP';
+                bRecover.onclick = async () => {
+                    try {
+                        await swd.recoverDp('manual request');
+                    } catch (e) {
+                        logToConsole(`DP recovery error: ${e.message}`, 'error');
+                    }
+                };
+
                 row1.appendChild(addr);
                 row1.appendChild(b32);
+                row1.appendChild(bRecover);
                 pageHex.appendChild(row1);
 
                 const rowW = document.createElement('div');
@@ -5806,6 +6308,17 @@
                 if (!editor) {
                     editor = new HexEditor({
                         bytesPerRow: 16,
+                        onReadRange: async (address, length) => {
+                            const words = await swd.memReadBlock32Via(a.ap, address, length / 4);
+                            const bytes = new Uint8Array(length);
+                            const values = new DataView(bytes.buffer);
+                            words.forEach((value, index) => values.setUint32(index * 4, value, true));
+                            return bytes;
+                        },
+                        onReadError: (error) => {
+                            logToConsole(`AP${a.ap} hex scroll: ${error.message}`, 'error');
+                            showToast(error.message, 'error');
+                        },
                         onChange: (chg) => {
                             const start = (editor.baseAddr + chg.start) >>> 0;
                             updateDirtyUi();
@@ -6719,31 +7232,20 @@
             }
         }
 
+        let swdPins;
         function initializeGpioCheckboxes() {
-            const container = document.getElementById('ioGpioCheckboxes');
-
-            /* ESP32-C3 available GPIO pins: 0-10, 20-21 */
-            const gpios = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21];
-
-            for (const gpio of gpios) {
-                const label = document.createElement('label');
-                label.style.display = 'flex';
-                label.style.alignItems = 'center';
-                label.style.gap = '6px';
-                label.style.cursor = 'pointer';
-                label.style.color = '#e5e7eb';
-                label.style.fontSize = '13px';
-
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.value = gpio;
-                checkbox.style.cursor = 'pointer';
-                checkbox.checked = (gpio >= 20);
-
-                label.appendChild(checkbox);
-                label.appendChild(document.createTextNode(`GPIO${gpio}`));
-                container.appendChild(label);
-            }
+            swdPins = new SwdPinControls(document.getElementById('ioGpioCheckboxes'), () => espSerial, async () => {
+                if (scanInProgress) throw new Error('Wait for the AP scan to finish');
+                if (!detectLoopActive) await stopSwdOperations('GPIO configuration changed');
+                swd = null;
+                for (const id of ['btnScanAps', 'btnDpDebug']) document.getElementById(id).disabled = true;
+                document.getElementById('detectedPins').textContent = '-';
+                document.getElementById('detectedIds').textContent = '-';
+                document.getElementById('apTabs').innerHTML = '';
+                document.getElementById('apPanel').textContent = '(not scanned)';
+                scannedAps = [];
+                activeAp = null;
+            });
         }
 
         window.onload = () => {

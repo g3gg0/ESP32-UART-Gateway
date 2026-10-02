@@ -15,6 +15,7 @@ class EspSerial {
         this.reader = null;
         this.rxBuffer = new Uint8Array(0);
         this.inputDone = false;
+        this._writeQueue = Promise.resolve();
         this.data_cbr = null; /* Raw UART-like bytes */
         this.config_cbr = null; /* Config packets */
         this.log_cbr = null; /* Parsed ESP log packets */
@@ -850,15 +851,24 @@ class EspSerial {
         }
     }
 
+    _enqueueWrite(write) {
+        const queued = this._writeQueue.then(write, write);
+        this._writeQueue = queued.catch(() => {});
+        return queued;
+    }
+
     async sendData(data) {
         if (!this.port) return;
         try {
-            const writer = this.port.writable.getWriter();
-            try {
-                await this.sendDataWithWriter(writer, data);
-            } finally {
-                writer.releaseLock();
-            }
+            await this._enqueueWrite(async () => {
+                if (!this.port) return;
+                const writer = this.port.writable.getWriter();
+                try {
+                    await this.sendDataWithWriter(writer, data);
+                } finally {
+                    writer.releaseLock();
+                }
+            });
         } catch (err) {
             logToConsole(`Send data error: ${err.message}`, 'info');
         }
@@ -885,15 +895,19 @@ class EspSerial {
     async sendPacket(packet, label) {
         if (!this.port) return;
         try {
-            const writer = this.port.writable.getWriter();
-            try {
-                //this.consoleLogHex(`TX ${label}:`, packet);
-                await writer.write(packet);
-            } finally {
-                writer.releaseLock();
-            }
+            await this._enqueueWrite(async () => {
+                if (!this.port) return;
+                const writer = this.port.writable.getWriter();
+                try {
+                    //this.consoleLogHex(`TX ${label}:`, packet);
+                    await writer.write(packet);
+                } finally {
+                    writer.releaseLock();
+                }
+            });
         } catch (err) {
             logToConsole(`Send packet error: ${err.message}`, 'info');
+            throw err;
         }
     }
 

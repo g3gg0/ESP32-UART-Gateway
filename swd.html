@@ -7,9 +7,27 @@
     <title>SWD Debug Console</title>
     
     <script src="EspSerial.js"></script>
+    <script src="SwdPins.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@alexaltea/capstone-js@3.0.5/dist/capstone.min.js"></script>
 
     <style>
+        #ioGpioCheckboxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 8px; }
+        .swd-pin { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; min-height: 42px; padding: 6px 10px; border: 1px solid #46505b; border-radius: 8px; background: #191e24; color: #e5e7eb; font-size: 12px; }
+        .swd-pin.scanning { border-color: #56bda2; background: #17332d; }
+        .swd-pin.idle-low { border-color: #555; background: #000; }
+        .swd-pin.idle-high { border-color: #f87171; background: #b91c1c; }
+        .swd-pin label { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
+        .swd-pin input { accent-color: #56bda2; width: 14px; height: 14px; }
+        .swd-pin select { width: 96px; min-width: 96px; padding: 4px 2px; border: 0; border-radius: 4px; background: #272e36; color: #f0d38a; font: inherit; }
+        .swd-pin.idle-low select { background: #000; color: #fff; }
+        .swd-pin.idle-high select { background: #b91c1c; color: #fff; }
+        .swd-pin select:disabled { opacity: 0.35; color: #c7ced6; }
+        .swd-pin:focus-within { outline: 2px solid #56bda2; outline-offset: 2px; }
+        .swd-pin-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 10px; }
+        .swd-clock-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; font-size: 12px; }
+        .swd-clock-control input { width: 90px; padding: 4px 6px; box-sizing: border-box; border: 1px solid #46505b; border-radius: 4px; background: #272e36; color: #e5e7eb; font: inherit; }
+        .swd-clock-control select { max-width: 100%; padding: 4px 6px; box-sizing: border-box; border: 1px solid #46505b; border-radius: 4px; background: #272e36; color: #e5e7eb; font: inherit; }
+        #swdWriteMode { width: 180px; }
         * {
             margin: 0;
             padding: 0;
@@ -586,7 +604,7 @@
                     <div style="display: flex; flex-direction: column; gap: 15px;">
                         <div>
                             <div style="margin-bottom: 8px; color: #a3e635; font-weight: 600;">Candidate GPIOs (SWD+SWC):</div>
-                            <div id="ioGpioCheckboxes" style="display: flex; gap: 12px; flex-wrap: wrap;"></div>
+                            <div id="ioGpioCheckboxes"></div>
                         </div>
                         <button id="btnRunSWDTest" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700; align-self: flex-start;">Detect device</button>
 
@@ -1756,13 +1774,9 @@
                 throw new Error('dpWrite: too many WAIT retries');
             }
 
-            async clearStickyErrors() {
-                /* ABORT bits: clear STKCMP/STKERR/WDERR/ORUNERR (best-effort) */
-                try {
-                    await this.dpWrite(DP_A23_ABORT, 0x1E);
-                } catch (e) {
-                    /* ignore */
-                }
+            async clearStickyErrors(abortPending = false) {
+                // Propagate failed ABORTs so initialization cannot report success.
+                await this.dpWrite(DP_A23_ABORT, abortPending ? 0x1F : 0x1E);
             }
 
             async ensurePowerUp(timeoutMs = 800) {
@@ -1778,11 +1792,7 @@
                  * Note: writing DP SELECT from the host is safe in this firmware; it explicitly
                  * invalidates/updates the cached SELECT value.
                  */
-                try {
-                    await this.dpWrite(DP_A23_SELECT, 0);
-                } catch (e) {
-                    /* ignore and keep trying below */
-                }
+                await this.dpWrite(DP_A23_SELECT, 0);
 
                 const start = performance.now();
                 let last = 0;
@@ -1795,7 +1805,8 @@
                     const haveAck = ((last & (CSYSPWRUPACK | CDBGPWRUPACK)) === (CSYSPWRUPACK | CDBGPWRUPACK));
 
                     if (!haveReq) {
-                        const v = (last | want) >>> 0;
+                        // Write request bits only: do not echo sticky/W1C status bits.
+                        const v = want;
                         await this.dpWrite(DP_A23_CTRLSTAT, v);
                         await new Promise(r => setTimeout(r, 20));
                         continue;
@@ -1808,7 +1819,7 @@
                     await new Promise(r => setTimeout(r, 20));
                 }
 
-                return { ok: false, ctrlstat: last >>> 0 };
+                throw new Error(`DP power-up timeout: CTRL/STAT=${u32ToHex(last)}`);
             }
 
             async postDetectInit(opts = {}) {
@@ -1817,10 +1828,9 @@
                 const allowRecover = (opts && opts.allowRecover !== undefined) ? !!opts.allowRecover : true;
 
                 const tryOnce = async () => {
+                    await this.clearStickyErrors(true);
                     const pu = await this.ensurePowerUp(timeoutMs);
                     this._trace(trace, `DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
-                    await this.clearStickyErrors();
-                    await this.flushRdbuff();
                     return pu;
                 };
 
@@ -1865,6 +1875,9 @@
                 const dpidr = await this.transferRaw(false, false, DP_A23_ABORT, 0);
                 lines.push(`DP DPIDR/IDCODE: ack=${this.ackName(dpidr.ack)} value=${u32ToHex(dpidr.value)}`);
 
+                // SELECT is synchronized with the firmware cache by raw transfers.
+                const select = await this.transferRaw(false, true, DP_A23_SELECT, 0);
+                lines.push(`DP SELECT(0): ack=${this.ackName(select.ack)}`);
                 const ctrl0 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
                 lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl0.ack)} value=${u32ToHex(ctrl0.value)}`);
 
@@ -1877,15 +1890,12 @@
                 }
 
                 const abort = await this.transferRaw(false, true, DP_A23_ABORT, 0x1E);
-                lines.push(`DP ABORT(0x1E): ack=${this.ackName(abort.ack)} (firmware may force OK)`);
+                lines.push(`DP ABORT(0x1E): ack=${this.ackName(abort.ack)} (old firmware may force OK)`);
 
                 const ctrl1 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
                 lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl1.ack)} value=${u32ToHex(ctrl1.value)} (banked)`);
 
-                /* Do not write DP SELECT here.
-                 * The firmware caches SELECT and may skip rewriting it; if the host changes SELECT behind its back,
-                 * subsequent AP reads can silently access the wrong AP/Bank and return zeros with ACK=OK.
-                 */
+                // Raw SELECT writes update the firmware's SELECT cache.
 
                 /* Use the same safe AP helpers (SELECT+RDBUFF handling) for debug probing. */
                 try {
@@ -1937,13 +1947,12 @@
                 this.log(`SWD link recovery: re-detecting pins${msg}...`, 'info');
                 const det = await this.detectPins(this.lastIoMask, this.lastVerbose);
                 this.log(`SWD link recovery: DPIDR=${u32ToHex(det.dpidr)} ok=${det.dpidr_ok ? 1 : 0}`, 'info');
+                if (!det.dpidr_ok || !det.detected_device) {
+                    throw new Error('SWD link recovery: target not detected');
+                }
                 const skipPostInit = !!(opts && opts.skipPostInit);
                 if (!skipPostInit) {
-                    try {
-                        await this.postDetectInit({ timeoutMs: 1200, allowRecover: false });
-                    } catch (e) {
-                        /* ignore */
-                    }
+                    await this.postDetectInit({ timeoutMs: 1200, allowRecover: false });
                 }
                 return det;
             }
@@ -2120,13 +2129,9 @@
                 /* Best-effort: clear sticky flags before scanning. */
                 await this.clearStickyErrors();
 
-                /* Cold start often needs explicit power-up request before AP reads. */
-                try {
-                    const pu = await this.ensurePowerUp(800);
-                    this._trace(trace, `DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
-                } catch (e) {
-                    this._trace(trace, `DP power-up: ERROR: ${e.message}`);
-                }
+                // AP results are meaningful only after DP initialization succeeds.
+                const pu = await this.ensurePowerUp(800);
+                this._trace(trace, `DP power-up: ok=1 CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
 
                 const aps = [];
                 let badAckRecoveries = 0;
@@ -2214,8 +2219,7 @@
                     try {
                         await this.apWriteStrict(ap, MEMAP_CSW, csw);
                         await this.apWriteStrict(ap, MEMAP_TAR, base);
-                        /* dummy read */
-                        await this.apReadStrict(ap, MEMAP_DRW, true);
+                        // Firmware already completes AP reads through DP RDBUFF.
                         const v = await this.apReadStrict(ap, MEMAP_DRW, true);
                         return v >>> 0;
                     } catch (e) {
@@ -2234,77 +2238,22 @@
             }
 
             async memReadBlock32Via(ap, address, words) {
-                const csw = 0x23000012;
                 const base = address >>> 0;
                 const count = words >>> 0;
-
-                /* C-like behavior: if anything goes wrong mid-block, restart the whole block.
-                 * This avoids partial results / word shifts after recover.
-                 */
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    const temp = [];
-                    try {
-                        /* Some targets/peripherals effectively behave like DRW returns the first word
-                         * immediately (no observable dummy read needed), while others require the classic
-                         * MEM-AP priming read.
-                         *
-                         * To avoid the common "first word skipped" symptom, take a reference word0 via
-                         * non-incrementing single read, then decide whether the first DRW read already
-                         * equals word0.
-                         */
-                        let ref0 = null;
-                        try {
-                            ref0 = await this.memRead32Via(ap, base);
-                        } catch (e) {
-                            ref0 = null;
-                        }
-
-                        await this.apWriteStrict(ap, MEMAP_CSW, csw);
-                        await this.apWriteStrict(ap, MEMAP_TAR, base);
-
-                        if (count === 0) return [];
-
-                        const r0 = await this.apReadStrict(ap, MEMAP_DRW, true);
-                        if (count === 1) {
-                            if (ref0 !== null && (r0 >>> 0) === (ref0 >>> 0)) {
-                                return [r0 >>> 0];
-                            }
-                            const r1 = await this.apReadStrict(ap, MEMAP_DRW, true);
-                            return [r1 >>> 0];
-                        }
-
-                        const r1 = await this.apReadStrict(ap, MEMAP_DRW, true);
-
-                        const r0IsWord0 = (ref0 !== null) && ((r0 >>> 0) === (ref0 >>> 0));
-                        if (r0IsWord0) {
-                            temp.push(r0 >>> 0);
-                            temp.push(r1 >>> 0);
-                            for (let i = 2; i < count; i++) {
-                                const v = await this.apReadStrict(ap, MEMAP_DRW, true);
-                                temp.push(v >>> 0);
-                            }
-                        } else {
-                            /* Treat r0 as dummy/priming, and r1 as word0 */
-                            temp.push(r1 >>> 0);
-                            for (let i = 1; i < count; i++) {
-                                const v = await this.apReadStrict(ap, MEMAP_DRW, true);
-                                temp.push(v >>> 0);
-                            }
-                        }
-                        return temp;
-                    } catch (e) {
-                        const msg = (e && e.message) ? e.message : String(e);
-                        if (attempt < 2) {
-                            await this.recoverLink(`memReadBlock32Via restart (${msg})`);
-                            await this.flushRdbuff();
-                            await new Promise(r => setTimeout(r, 30));
-                            continue;
-                        }
-                        throw e;
+                if ((base & 3) !== 0) throw new Error('memReadBlock32Via: unaligned address');
+                if (count === 0) return [];
+                // Each firmware AP helper returns the completed result, not a dummy.
+                // Use the guaranteed 1 KiB TAR window even on APs with larger windows.
+                await this.apWriteStrict(ap, MEMAP_CSW, 0x23000012);
+                const result = [];
+                for (let i = 0; i < count; i++) {
+                    const addr = (base + i * 4) >>> 0;
+                    if (i === 0 || (addr & 0x3FF) === 0) {
+                        await this.apWriteStrict(ap, MEMAP_TAR, addr);
                     }
+                    result.push((await this.apReadStrict(ap, MEMAP_DRW, true)) >>> 0);
                 }
-
-                throw new Error('memReadBlock32Via: unreachable');
+                return result;
             }
 
             async memWriteBlock32Via(ap, address, words) {
@@ -2312,6 +2261,10 @@
                 await this.apWrite(ap, MEMAP_CSW, csw);
                 await this.apWrite(ap, MEMAP_TAR, address >>> 0);
                 for (let i = 0; i < words.length; i++) {
+                    const current = ((address >>> 0) + i * 4) >>> 0;
+                    if (i > 0 && (current & 0x3FF) === 0) {
+                        await this.apWrite(ap, MEMAP_TAR, current);
+                    }
                     await this.apWrite(ap, MEMAP_DRW, (words[i] >>> 0));
                 }
                 return true;
@@ -2324,6 +2277,10 @@
                 await this.apWrite(ap, MEMAP_CSW, csw);
                 await this.apWrite(ap, MEMAP_TAR, addr);
                 for (let i = 0; i < halfwords.length; i++) {
+                    const current = ((address >>> 0) + i * 2) >>> 0;
+                    if (i > 0 && (current & 0x3FF) === 0) {
+                        await this.apWrite(ap, MEMAP_TAR, current);
+                    }
                     await this.apWrite(ap, MEMAP_DRW, (halfwords[i] & 0xFFFF) >>> 0);
                 }
                 return true;
@@ -2335,6 +2292,10 @@
                 await this.apWrite(ap, MEMAP_CSW, csw);
                 await this.apWrite(ap, MEMAP_TAR, addr);
                 for (let i = 0; i < bytes.length; i++) {
+                    const current = ((address >>> 0) + i * 1) >>> 0;
+                    if (i > 0 && (current & 0x3FF) === 0) {
+                        await this.apWrite(ap, MEMAP_TAR, current);
+                    }
                     await this.apWrite(ap, MEMAP_DRW, (bytes[i] & 0xFF) >>> 0);
                 }
                 return true;
@@ -2554,6 +2515,18 @@
                 return;
             }
 
+            const scanMask = swdPins.masks().scan;
+            if (!scanMask || !(scanMask & (scanMask - 1))) {
+                logToConsole('Select at least two scan GPIOs for SWDIO and SWCLK', 'error');
+                return;
+            }
+            try {
+                await swdPins.apply();
+            } catch (error) {
+                logToConsole(error.message, 'error');
+                return;
+            }
+
             /* Best-effort: prime audio from the user gesture. */
             primeTadaaAudio();
 
@@ -2570,14 +2543,26 @@
             const sleep = (ms) => new Promise(r => setTimeout(r, ms | 0));
 
             try {
-                const ioMask = calculateMaskFromCheckboxes('ioGpioCheckboxes');
                 const verbose = !!(document.getElementById('chkVerboseSwd') && document.getElementById('chkVerboseSwd').checked);
 
-                if (!swd) {
-                    swd = new Swd(espSerial, logToConsole);
-                }
-
                 while (detectLoopActive && myToken === detectLoopToken) {
+                    const pinRevision = swdPins.revision;
+                    try {
+                        await swdPins.pending;
+                    } catch (error) {
+                        if (pinRevision !== swdPins.revision) continue;
+                        logToConsole(`Pin update failed: ${error.message}`, 'error');
+                        detectLoopActive = false;
+                        return;
+                    }
+                    if (!detectLoopActive || myToken !== detectLoopToken) return;
+                    if (pinRevision !== swdPins.revision) continue;
+                    const ioMask = swdPins.masks().scan;
+                    if (!ioMask || !(ioMask & (ioMask - 1))) {
+                        await sleep(250);
+                        continue;
+                    }
+                    if (!swd) swd = new Swd(espSerial, logToConsole);
                     let det = null;
                     try {
                         /* Quiet cycling: don't ask firmware to be verbose. */
@@ -2586,6 +2571,9 @@
                         await sleep(250);
                         continue;
                     }
+
+                    if (!detectLoopActive || myToken !== detectLoopToken) return;
+                    if (pinRevision !== swdPins.revision) continue;
 
                     if (!det || !det.detected_device || !det.dpidr_ok) {
                         await sleep(250);
@@ -2600,12 +2588,9 @@
                         playTadaa();
                     }
 
-                    /* Optional: re-run detect once with user verbosity. */
-                    try {
-                        det = await swd.detectPins(ioMask, verbose);
-                    } catch (e) {
-                        /* keep prior det */
-                    }
+                    // Keep the successful detection; changing log verbosity must
+                    // not issue another hardware scan or reset the live SW-DP.
+                    swd.lastVerbose = !!verbose;
 
                     const pinsEl = document.getElementById('detectedPins');
                     const idsEl = document.getElementById('detectedIds');
@@ -2625,6 +2610,9 @@
                         logToConsole(`DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`, pu.ok ? 'info' : 'error');
                     } catch (e) {
                         logToConsole(`DP power-up: ERROR: ${e.message}`, 'error');
+                        logToConsole('DP initialization failed; use DP Debug to inspect the link.', 'error');
+                        if (scanBtn) scanBtn.disabled = true;
+                        return;
                     }
 
                     logToConsole('Ready: click DP Debug, then Scan APs', 'info');
@@ -4103,31 +4091,20 @@
             }
         }
 
+        let swdPins;
         function initializeGpioCheckboxes() {
-            const container = document.getElementById('ioGpioCheckboxes');
-            
-            /* ESP32-C3 available GPIO pins: 0-10, 20-21 */
-            const gpios = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21];
-            
-            for (const gpio of gpios) {
-                const label = document.createElement('label');
-                label.style.display = 'flex';
-                label.style.alignItems = 'center';
-                label.style.gap = '6px';
-                label.style.cursor = 'pointer';
-                label.style.color = '#e5e7eb';
-                label.style.fontSize = '13px';
-                
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.value = gpio;
-                checkbox.style.cursor = 'pointer';
-                checkbox.checked = (gpio >= 20);
-                
-                label.appendChild(checkbox);
-                label.appendChild(document.createTextNode(`GPIO${gpio}`));
-                container.appendChild(label);
-            }
+            swdPins = new SwdPinControls(document.getElementById('ioGpioCheckboxes'), () => espSerial, async () => {
+                if (scanInProgress) throw new Error('Wait for the AP scan to finish');
+                if (!detectLoopActive) detectLoopToken++;
+                swd = null;
+                for (const id of ['btnScanAps', 'btnDpDebug']) document.getElementById(id).disabled = true;
+                document.getElementById('detectedPins').textContent = '-';
+                document.getElementById('detectedIds').textContent = '-';
+                document.getElementById('apTabs').innerHTML = '';
+                document.getElementById('apPanel').textContent = '(not scanned)';
+                scannedAps = [];
+                activeAp = null;
+            });
         }
 
         window.onload = () => {

@@ -17,6 +17,12 @@
 #include "freertos/task.h"
 
 static bool swd_session_active = false;
+static bool swd_open_drain = true;
+static bool swd_pull_up = true;
+static uint8_t swd_read_pull = 0;
+static uint32_t swd_clock_hz = 0;
+static uint8_t swd_fixed_swc = 0xFF;
+static uint8_t swd_fixed_swd = 0xFF;
 static AppFSM swd_ctx;
 static volatile uint32_t swd_log_suppress = 0;
 
@@ -272,6 +278,58 @@ esp_err_t swd_handle_packet(const uint8_t *payload, size_t payload_len)
                                   (const uint8_t *)&det, (uint16_t)sizeof(det), true);
     }
 
+    case SWD_UART_OP_CONFIGURE_PINS:
+    {
+        if (arg_len != 12 && arg_len != 13 && arg_len != 18 && arg_len != 20)
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_LEN, 0, NULL, 0, false);
+            return ESP_ERR_INVALID_SIZE;
+        }
+
+        uint32_t scan_mask = read_u32_le(args);
+        uint32_t high_mask = read_u32_le(args + 4);
+        uint32_t low_mask = read_u32_le(args + 8);
+        uint32_t clock_hz = arg_len >= 18 ? read_u32_le(args + 14) : 0;
+        bool fixed_pins = arg_len == 20 && !(args[18] == 0xFF && args[19] == 0xFF);
+        if (((scan_mask | high_mask | low_mask) & ~gpio_legal_mask) ||
+            (scan_mask & (high_mask | low_mask)) || (high_mask & low_mask) ||
+            (arg_len >= 13 && args[12] > 2) ||
+            (arg_len >= 18 && (args[13] > 1 || clock_hz < 500 || clock_hz > 500000)) ||
+            (fixed_pins && (args[18] >= 32 || args[19] >= 32 || args[18] == args[19] ||
+             !(scan_mask & (1U << args[18])) || !(scan_mask & (1U << args[19])))))
+        {
+            (void)swd_queue_response(op, seq, SWD_UART_STATUS_BAD_ARG, 0, NULL, 0, false);
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        swd_stop_session();
+        swd_open_drain = arg_len == 12 || args[12] != 1;
+        swd_pull_up = arg_len == 12 || args[12] != 2;
+        swd_read_pull = arg_len >= 18 ? args[13] : (swd_pull_up ? 0 : 2);
+        swd_clock_hz = clock_hz;
+        swd_fixed_swc = fixed_pins ? args[18] : 0xFF;
+        swd_fixed_swd = fixed_pins ? args[19] : 0xFF;
+        for (int io = 0; io < 32; io++)
+        {
+            if (!(gpio_legal_mask & (1U << io)))
+            {
+                continue;
+            }
+            gpio_set_direction(io, GPIO_MODE_INPUT);
+            gpio_set_pull_mode(io, GPIO_FLOATING);
+        }
+        for (int io = 0; io < 32; io++)
+        {
+            uint32_t bitmask = 1U << io;
+            if ((high_mask | low_mask) & bitmask)
+            {
+                gpio_set_level(io, (high_mask & bitmask) ? 1 : 0);
+                gpio_set_direction(io, GPIO_MODE_OUTPUT);
+            }
+        }
+        return swd_queue_response(op, seq, SWD_UART_STATUS_OK, 0, NULL, 0, false);
+    }
+
     case SWD_UART_OP_DEINIT:
     {
         if (!swd_session_active)
@@ -398,19 +456,25 @@ static uint8_t get_bit_num(uint32_t x)
 
 static void swd_configure_pins(AppFSM *const ctx, bool output)
 {
+    gpio_mode_t output_mode = ctx->swd_open_drain ? GPIO_MODE_OUTPUT_OD : GPIO_MODE_OUTPUT;
+    gpio_pull_mode_t write_pull = ctx->swd_pull_up ? GPIO_PULLUP_ONLY : GPIO_FLOATING;
+    gpio_pull_mode_t read_pull = ctx->swd_read_pull == 1 ? GPIO_PULLDOWN_ONLY :
+                                 (ctx->swd_read_pull == 0 ? GPIO_PULLUP_ONLY : GPIO_FLOATING);
+    gpio_pull_mode_t data_pull = output ? write_pull : read_pull;
+    gpio_pull_mode_t clock_pull = ctx->swd_open_drain ? write_pull : GPIO_FLOATING;
     if (ctx->io_num_swc < 32 && ctx->io_num_swd < 32)
     {
-        gpio_set_direction(ctx->io_num_swc, GPIO_MODE_OUTPUT);
-        gpio_set_pull_mode(ctx->io_num_swc, GPIO_FLOATING);
+        gpio_set_direction(ctx->io_num_swc, output_mode);
+        gpio_set_pull_mode(ctx->io_num_swc, clock_pull);
         if (!output)
         {
             gpio_set_direction(ctx->io_num_swd, GPIO_MODE_INPUT);
-            gpio_set_pull_mode(ctx->io_num_swd, GPIO_PULLUP_ONLY);
+            gpio_set_pull_mode(ctx->io_num_swd, data_pull);
         }
         else
         {
-            gpio_set_direction(ctx->io_num_swd, GPIO_MODE_OUTPUT_OD);
-            gpio_set_pull_mode(ctx->io_num_swd, GPIO_PULLUP_ONLY);
+            gpio_set_direction(ctx->io_num_swd, output_mode);
+            gpio_set_pull_mode(ctx->io_num_swd, data_pull);
         }
         return;
     }
@@ -429,14 +493,15 @@ static void swd_configure_pins(AppFSM *const ctx, bool output)
         if (!(ctx->io_swc & bitmask) && !(ctx->io_swd & bitmask))
         {
             gpio_set_direction(io, GPIO_MODE_INPUT);
-            gpio_set_pull_mode(io, GPIO_PULLUP_ONLY);
+            gpio_set_pull_mode(io, read_pull);
             continue;
         }
 
         if (ctx->current_mask & bitmask)
         {
             /* set for clock */
-            gpio_set_direction(io, GPIO_MODE_OUTPUT);
+            gpio_set_direction(io, output_mode);
+            gpio_set_pull_mode(io, clock_pull);
         }
         else
         {
@@ -444,11 +509,12 @@ static void swd_configure_pins(AppFSM *const ctx, bool output)
             if (!output)
             {
                 gpio_set_direction(io, GPIO_MODE_INPUT);
-                gpio_set_pull_mode(io, GPIO_PULLUP_ONLY);
+                gpio_set_pull_mode(io, data_pull);
             }
             else
             {
-                gpio_set_direction(io, GPIO_MODE_OUTPUT);
+                gpio_set_direction(io, output_mode);
+                gpio_set_pull_mode(io, data_pull);
             }
         }
     }
@@ -508,7 +574,7 @@ static uint32_t swd_get_data(AppFSM *const ctx)
 {
     if (ctx->io_num_swd < 32)
     {
-        return gpio_get_level(ctx->io_num_swd);
+        return gpio_get_level(ctx->io_num_swd) ? (1U << ctx->io_num_swd) : 0;
     }
 
     uint32_t bits = 0;
@@ -528,10 +594,7 @@ static uint32_t swd_get_data(AppFSM *const ctx)
 
 static void swd_clock_delay(AppFSM *const ctx)
 {
-    if (ctx->swd_clock_delay)
-    {
-        esp_rom_delay_us(ctx->swd_clock_delay);
-    }
+    esp_rom_delay_us(ctx->swd_clock_delay ? ctx->swd_clock_delay : 1);
 }
 
 static void swd_write_bit(AppFSM *const ctx, bool level)
@@ -542,6 +605,15 @@ static void swd_write_bit(AppFSM *const ctx, bool level)
     swd_set_clock(ctx, 1);
     swd_clock_delay(ctx);
     swd_set_clock(ctx, 0);
+}
+
+/* Write bits finish low; reads and turnaround cycles finish high. */
+static void swd_clock_cycle(AppFSM *const ctx)
+{
+    swd_set_clock(ctx, 0);
+    swd_clock_delay(ctx);
+    swd_set_clock(ctx, 1);
+    swd_clock_delay(ctx);
 }
 
 static uint32_t swd_read_bit(AppFSM *const ctx)
@@ -585,8 +657,10 @@ static uint8_t swd_transfer(AppFSM *const ctx, bool ap, bool write, uint8_t a23,
     swd_set_data(ctx, false);
     swd_configure_pins(ctx, true);
 
-    uint32_t idle = 0;
-    swd_write(ctx, (uint8_t *)&idle, ctx->swd_idle_bits);
+    for (uint32_t i = 0; i < ctx->swd_idle_bits; i++)
+    {
+        swd_write_bit(ctx, false);
+    }
 
     uint8_t request[] = {0};
 
@@ -602,6 +676,7 @@ static uint8_t swd_transfer(AppFSM *const ctx, bool ap, bool write, uint8_t a23,
 
     /* turnaround cycle */
     swd_configure_pins(ctx, false);
+    swd_clock_cycle(ctx);
 
     uint32_t ack = 0;
 
@@ -612,28 +687,31 @@ static uint8_t swd_transfer(AppFSM *const ctx, bool ap, bool write, uint8_t a23,
         ack |= swd_read_bit(ctx) ? 0x04 : 0;
     }
 
-    /* Force ABORT writes to always "work" so we can recover from bad states.
-     * Do NOT mask read ACKs here (otherwise IDCODE/DPIDR reads look successful even if the bus is broken).
-     */
-    if (!ap && write && a23 == 0)
-    {
-        ack = 1;
-    }
-
     if (ack != 0x01)
     {
+        /* Default SWD mode has no data phase on WAIT/FAULT. For an
+         * invalid ACK, back off for a possible data phase as CMSIS-DAP does. */
+        if (ack != 2 && ack != 4)
+        {
+            for (int i = 0; i < 33; i++) swd_clock_cycle(ctx);
+            ctx->dp_regs.select_ok = false;
+        }
+        swd_clock_cycle(ctx);
+        swd_set_data(ctx, true);
+        swd_configure_pins(ctx, true);
         return ack;
     }
 
     if (write)
     {
-        swd_write_bit(ctx, 0);
+        swd_clock_cycle(ctx);
+        swd_set_data(ctx, false);
         swd_configure_pins(ctx, true);
 
         /* send 32 WDATA bits */
         for (int pos = 0; pos < 32; pos++)
         {
-            swd_write_bit(ctx, *data & (1 << pos));
+            swd_write_bit(ctx, *data & (1U << pos));
         }
 
         /* send parity bit */
@@ -654,10 +732,11 @@ static uint8_t swd_transfer(AppFSM *const ctx, bool ap, bool write, uint8_t a23,
 
         if (parity != __builtin_parity(*data))
         {
-            return 8;
+            ack = 8;
         }
+        swd_clock_cycle(ctx);
     }
-    swd_set_data(ctx, false);
+    swd_set_data(ctx, true);
     swd_configure_pins(ctx, true);
 
     return ack;
@@ -744,7 +823,7 @@ static void swd_abort_simple(AppFSM *const ctx)
 
 static uint8_t swd_select(AppFSM *const ctx, uint8_t ap_sel, uint8_t ap_bank, uint8_t dp_bank)
 {
-    uint32_t bank_reg = (ap_sel << 24) | ((ap_bank & 0x0F) << 4) | (dp_bank & 0x0F);
+    uint32_t bank_reg = ((uint32_t)ap_sel << 24) | ((ap_bank & 0x0F) << 4) | (dp_bank & 0x0F);
 
     if (ctx->dp_regs.select_ok && bank_reg == ctx->dp_regs.select)
     {
@@ -790,6 +869,30 @@ swd_read_dpbank(AppFSM *const ctx, uint8_t dp_off, uint8_t dp_bank, uint32_t *da
     }
     return ret;
 }
+static uint8_t swd_read_rdbuff(AppFSM *const ctx, uint32_t *data)
+{
+    uint8_t ack = 2;
+    for (int attempt = 0; attempt < 32; attempt++)
+    {
+        ack = swd_transfer(ctx, false, false, 3, data);
+        if (ack != 2)
+        {
+            return ack;
+        }
+        esp_rom_delay_us(10);
+    }
+
+    uint32_t abort = 0x1F;
+    uint8_t abort_ack = swd_transfer(ctx, false, true, 0, &abort);
+    ctx->dp_regs.select_ok = false;
+    if (abort_ack != 1)
+    {
+        LOG("swd_read_rdbuff: DAPABORT failed: %d", abort_ack);
+        return abort_ack;
+    }
+    return ack;
+}
+
 static uint8_t swd_read_ap(AppFSM *const ctx, uint8_t ap, uint8_t ap_off, uint32_t *data)
 {
     /* select target bank */
@@ -814,7 +917,7 @@ static uint8_t swd_read_ap(AppFSM *const ctx, uint8_t ap, uint8_t ap_off, uint32
     }
 
     uint32_t rdbuff = 0;
-    ret = swd_transfer(ctx, false, false, 3, &rdbuff);
+    ret = swd_read_rdbuff(ctx, &rdbuff);
     if (ret != 1)
     {
         DBG("rdbuff failed: %d", ret);
@@ -867,7 +970,7 @@ static uint8_t swd_read_ap_single(AppFSM *const ctx, uint8_t ap, uint8_t ap_off,
     }
 
     uint32_t rdbuff = 0;
-    ret = swd_transfer(ctx, false, false, 3, &rdbuff);
+    ret = swd_read_rdbuff(ctx, &rdbuff);
     if (ret != 1)
     {
         DBG("rdbuff failed: %d", ret);
@@ -936,6 +1039,7 @@ static uint32_t swd_detect(AppFSM *const ctx)
 
     /* turnaround cycle */
     swd_configure_pins(ctx, false);
+    swd_clock_cycle(ctx);
 
     uint32_t ack_bits[3];
     uint32_t rdata[32];
@@ -957,10 +1061,10 @@ static uint32_t swd_detect(AppFSM *const ctx)
 
     for (int io = 0; io < 32; io++)
     {
-        uint32_t bitmask = 1 << io;
+        uint32_t bitmask = 1U << io;
 
         /* skip if it's a clock */
-        if (ctx->current_mask & bitmask)
+        if (!(ctx->io_swd & bitmask) || (ctx->current_mask & bitmask))
         {
             continue;
         }
@@ -978,6 +1082,9 @@ static uint32_t swd_detect(AppFSM *const ctx)
             dpidr >>= 1;
             dpidr |= (rdata[pos] & bitmask) ? 0x80000000 : 0;
         }
+
+        LOG("swd_detect: clock_mask=%08lX data=GPIO%d ACK=%d DPIDR=%08lX parity=%d",
+            ctx->io_swc & ctx->current_mask, io, ack, dpidr, !!(parity & bitmask));
 
         if (ack == 1 && dpidr != 0 && dpidr != 0xFFFFFFFF)
         {
@@ -1002,34 +1109,56 @@ static uint32_t swd_detect(AppFSM *const ctx)
             }
         }
     }
-    swd_set_data(ctx, false);
+    swd_clock_cycle(ctx);
+    swd_set_data(ctx, true);
     swd_configure_pins(ctx, true);
 
     return 0;
 }
 
+static void swd_enter_swd(AppFSM *const ctx)
+{
+    swd_configure_pins(ctx, true);
+    for (int bitcount = 0; bitcount < 50; bitcount += 8)
+    {
+        swd_write_byte(ctx, 0xFF, 8);
+    }
+    swd_write_byte(ctx, 0x9E, 8);
+    swd_write_byte(ctx, 0xE7, 8);
+    swd_line_reset(ctx);
+}
+
 static void swd_scan(AppFSM *const ctx)
 {
+    /* Once pins are known, stay in SWD. Replaying JTAG-to-SWD selection
+     * through a live SW-DP is unnecessary and can disturb the link. */
+    if (ctx->io_num_swd < 32 && ctx->io_num_swc < 32)
+    {
+        uint32_t dpidr = 0;
+        uint8_t ack = swd_transfer(ctx, false, false, REG_IDCODE, &dpidr);
+        if (ack != 1)
+        {
+            swd_configure_pins(ctx, true);
+            swd_line_reset(ctx);
+            ack = swd_transfer(ctx, false, false, REG_IDCODE, &dpidr);
+        }
+        if (ack != 1 && ack != 2 && ack != 4 && ack != 8)
+        {
+            swd_enter_swd(ctx);
+            ack = swd_transfer(ctx, false, false, REG_IDCODE, &dpidr);
+        }
+        ctx->dp_regs.dpidr_ok = ack == 1 && dpidr != 0 && dpidr != UINT32_MAX;
+        ctx->dp_regs.dpidr = ctx->dp_regs.dpidr_ok ? dpidr : 0;
+        ctx->detected = ctx->dp_regs.dpidr_ok;
+        return;
+    }
+
     /* To switch SWJ-DP from JTAG to SWD operation:
         1. Send at least 50 SWCLKTCK cycles with SWDIOTMS HIGH. This ensures that the current interface is in its reset state. The JTAG interface only detects the 16-bit JTAG-to-SWD sequence starting from the Test-Logic-Reset state.
         2. Send the 16-bit JTAG-to-SWD select sequence 0x79e7 on SWDIOTMS.
         3. Send at least 50 SWCLKTCK cycles with SWDIOTMS HIGH. This ensures that if SWJ-DP was already in SWD operation before sending the select sequence, the SWD interface enters line reset state.
     */
-    swd_configure_pins(ctx, true);
-
-    /* reset JTAG interface */
-    for (int bitcount = 0; bitcount < 50; bitcount += 8)
-    {
-        swd_write_byte(ctx, 0xFF, 8);
-    }
-
-    /* Send the 16-bit JTAG-to-SWD select sequence */
-    swd_write_byte(ctx, 0x9E, 8);
-    swd_write_byte(ctx, 0xE7, 8);
-
-    /* resynchronize SWD */
-    swd_line_reset(ctx);
-
+    swd_enter_swd(ctx);
     swd_detect(ctx);
 }
 
@@ -1060,6 +1189,10 @@ void swd_do_scan(AppFSM *ctx)
     }
 
     ctx->detected = false;
+    /* A previous successful detect is not evidence for this scan attempt. */
+    ctx->dp_regs.dpidr_ok = false;
+    ctx->dp_regs.dpidr = 0;
+    ctx->dp_regs.targetid_ok = false;
     ctx->current_mask = gpio_direction_mask[ctx->current_mask_id];
 
     /* when SWD was already detected, set it to data pin regardless of the mask */
@@ -1070,6 +1203,18 @@ void swd_do_scan(AppFSM *ctx)
 
     /* do one scan step */
     xSemaphoreTake(ctx->swd_mutex, portMAX_DELAY);
+    if (ctx->swd_fixed_swc < 32 && ctx->swd_fixed_swd < 32)
+    {
+        ctx->io_num_swc = ctx->swd_fixed_swc;
+        ctx->io_num_swd = ctx->swd_fixed_swd;
+        ctx->io_swc = 1U << ctx->io_num_swc;
+        ctx->io_swd = 1U << ctx->io_num_swd;
+        ctx->current_mask = ctx->io_swc;
+        if (!ctx->detected_device)
+        {
+            swd_enter_swd(ctx);
+        }
+    }
     swd_scan(ctx);
     xSemaphoreGive(ctx->swd_mutex);
 
@@ -1166,10 +1311,16 @@ void swd_do_scan(AppFSM *ctx)
     }
     else
     {
+        ctx->detected_device = false;
         if (!has_multiple_bits(ctx->io_swc))
         {
             DBGS(" - Lost device");
         }
+        /* Resume the candidate search after a failed known-pin probe. */
+        ctx->io_swd = ctx->io_selected;
+        ctx->io_swc = ctx->io_selected;
+        ctx->io_num_swd = 0xFF;
+        ctx->io_num_swc = 0xFF;
     }
 
     ctx->current_mask_id = (uint8_t)((ctx->current_mask_id + 1) % COUNT(gpio_direction_mask));
@@ -1183,6 +1334,18 @@ void swd_init(AppFSM *const ctx, uint32_t io_mask)
 
     io_mask &= gpio_legal_mask;
 
+    if (io_mask)
+    {
+        const gpio_config_t pins = {
+            .pin_bit_mask = io_mask,
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&pins);
+    }
+
     ctx->loop_count = 0;
     ctx->detected_timeout = 0;
     ctx->detected = false;
@@ -1190,6 +1353,11 @@ void swd_init(AppFSM *const ctx, uint32_t io_mask)
     ctx->detected_notified = false;
     ctx->ap_scanned = 0;
     ctx->current_mask_id = 0;
+    ctx->swd_open_drain = swd_open_drain;
+    ctx->swd_pull_up = swd_pull_up;
+    ctx->swd_read_pull = swd_read_pull;
+    ctx->swd_fixed_swc = swd_fixed_swc;
+    ctx->swd_fixed_swd = swd_fixed_swd;
     ctx->current_mask = gpio_direction_mask[ctx->current_mask_id];
     ctx->io_selected = io_mask;
     ctx->io_swd = io_mask;
@@ -1203,7 +1371,7 @@ void swd_init(AppFSM *const ctx, uint32_t io_mask)
     ctx->hex_addr = 0xE000EDF0;
     {
         const device_config_t *cfg = config_manager_get();
-        ctx->swd_clock_delay = cfg->swd_clock_delay_us;
+        ctx->swd_clock_delay = swd_clock_hz ? (500000U + swd_clock_hz - 1) / swd_clock_hz : cfg->swd_clock_delay_us;
         ctx->swd_idle_bits = cfg->swd_idle_bits;
 
         if (ctx->swd_idle_bits == 0)

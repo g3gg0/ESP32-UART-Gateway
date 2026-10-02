@@ -82,6 +82,11 @@ typedef struct {
     int32_t detected_timeout;
     uint32_t swd_clock_delay;
     uint32_t swd_idle_bits;
+    bool swd_open_drain;
+    bool swd_pull_up;
+    uint8_t swd_read_pull;
+    uint8_t swd_fixed_swc;
+    uint8_t swd_fixed_swd;
     bool detected;
     bool detected_device;
     bool detected_notified;
@@ -118,10 +123,10 @@ void swd_main_loop_idle(AppFSM* ctx);
 #define IDLE_BITS 8
 #define CLOCK_DELAY 0
 
-#define CDBGPWRUPREQ (1 << 28)
-#define CDBGPWRUPACK (1 << 29)
-#define CSYSPWRUPREQ (1 << 30)
-#define CSYSPWRUPACK (1 << 31)
+#define CDBGPWRUPREQ (1U << 28)
+#define CDBGPWRUPACK (1U << 29)
+#define CSYSPWRUPREQ (1U << 30)
+#define CSYSPWRUPACK (1U << 31)
 #define WDATAERR (1 << 7)
 #define STICKYORUN (1 << 1)
 #define STICKYERR (1 << 5)
