@@ -15,7 +15,7 @@ function readPage(file) {
 
 const pinsContext = vm.createContext({ Uint8Array, DataView, logToConsole: () => {},
     document: { createElement: () => ({}) } });
-vm.runInContext(fs.readFileSync('web/multiprotocol/js/swd/Swd.js', 'utf8') + '\nglobalThis.PinControls = SwdPinControls;', pinsContext);
+vm.runInContext(fs.readFileSync('web/multiprotocol/js/swd/swd.js', 'utf8') + '\nglobalThis.PinControls = SwdPinControls;', pinsContext);
 
 const serialContext = vm.createContext({ Uint8Array, setTimeout, clearTimeout, logToConsole: () => {}, window: {} });
 vm.runInContext(fs.readFileSync('EspSerial.js', 'utf8') + '\nglobalThis.Serial = EspSerial;', serialContext);

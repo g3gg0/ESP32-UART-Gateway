@@ -11,7 +11,7 @@ required). `shell.html` contains the shared page frame; `views/swd.html`,
 `views/can.html`, `views/uart.html`, and `views/ef.html` are HTML fragments inserted
 at build time. They share the same serial connection and application state.
 
-`js/swd/Swd.js` contains the SWD transport and its pin-control class.
+`js/swd/swd.js` contains the SWD transport and its pin-control class.
 `js/swd/HexEditor.js` and `js/swd/MemoryScanner.js` contain the SWD tools.
 `js/swd/protocol.js` owns SWD state, register definitions, CoreSight decoding,
 diagnostics, detection, AP/memory UI, and GPIO initialization.
