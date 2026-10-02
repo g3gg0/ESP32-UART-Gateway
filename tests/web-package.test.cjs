@@ -31,7 +31,7 @@ test('SWD owns its pin controls, host state and UI implementations', () => {
     assert.equal(fs.existsSync('SwdPins.js'), false);
     const app = fs.readFileSync('web/multiprotocol/js/app.js', 'utf8');
     const protocol = fs.readFileSync('web/multiprotocol/js/swd/protocol.js', 'utf8');
-    const swd = fs.readFileSync('web/multiprotocol/js/swd/Swd.js', 'utf8');
+    const swd = fs.readFileSync('web/multiprotocol/js/swd/swd.js', 'utf8');
     assert.match(swd, /class SwdPinControls/);
     assert.match(swd, /class Swd \{/);
     for (const name of ['runSWDTest', 'scanAps', 'renderApTabs', 'pollDpStatus', 'initializeGpioCheckboxes', 'connectSwdUi', 'resetSwdUi']) {
