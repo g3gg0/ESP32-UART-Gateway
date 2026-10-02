@@ -28,6 +28,9 @@ class EspSerial {
         this._swdSeq = 1;
         this._swdPending = new Map(); /* seq -> { resolve, reject, timer } */
         this._swdDefaultTimeoutMs = 1500;
+        this._swdLastActivity = 0;
+        this._swdActivityVersion = 0;
+        this._swdDpBank = null;
 
         /* CAN request/response tracking */
         this._canSeq = 1;
@@ -734,6 +737,8 @@ class EspSerial {
     async swdRequest(op, args, options) {
         if (!this.port) throw new Error('Port not connected');
         const opt = options || {};
+        if (opt.background && (op !== 0x03 || args?.length !== 8 || args[0] !== 0 || args[1] !== 0 || args[2] !== 1)) throw new Error('Background SWD polling only supports CTRL/STAT reads');
+        if (opt.background && (this._swdPending.size || this._swdDpBank !== 0 || Date.now() - this._swdLastActivity < 100)) return null;
         const flags = (opt.flags || 0) & 0xFF;
         const timeoutMs = opt.timeoutMs || this._swdDefaultTimeoutMs;
         const seq = (opt.seq !== undefined) ? (opt.seq & 0xFFFF) : this._nextSwdSeq();
@@ -744,6 +749,13 @@ class EspSerial {
 
         const payload = this._buildSwdRequestPayload(op, flags, seq, args);
         const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_SWD);
+        const selectsBank = op === 0x03 && payload[8] === 0 && payload[9] === 1 && payload[10] === 2;
+        const selectsAp = op === 0x10 || op === 0x11 || op === 0x12;
+        if (!opt.background) {
+            this._swdLastActivity = Date.now();
+            this._swdActivityVersion++;
+            if (selectsBank || selectsAp || op === 0x01 || op === 0x02) this._swdDpBank = null;
+        }
 
         return new Promise(async (resolve, reject) => {
             const timer = setTimeout(() => {
@@ -760,6 +772,14 @@ class EspSerial {
                 this._swdPending.delete(seq);
                 reject(err);
             }
+        }).then(response => {
+            if (response.status === 0 && response.ack === 1) {
+                if (selectsBank) this._swdDpBank = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint32(12, true) & 15;
+                if (selectsAp) this._swdDpBank = 0;
+            }
+            return response;
+        }).finally(() => {
+            if (!opt.background) this._swdLastActivity = Date.now();
         });
     }
 

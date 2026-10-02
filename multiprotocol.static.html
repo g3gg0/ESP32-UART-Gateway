@@ -37,6 +37,9 @@ class EspSerial {
         this._swdSeq = 1;
         this._swdPending = new Map(); /* seq -> { resolve, reject, timer } */
         this._swdDefaultTimeoutMs = 1500;
+        this._swdLastActivity = 0;
+        this._swdActivityVersion = 0;
+        this._swdDpBank = null;
 
         /* CAN request/response tracking */
         this._canSeq = 1;
@@ -743,6 +746,8 @@ class EspSerial {
     async swdRequest(op, args, options) {
         if (!this.port) throw new Error('Port not connected');
         const opt = options || {};
+        if (opt.background && (op !== 0x03 || args?.length !== 8 || args[0] !== 0 || args[1] !== 0 || args[2] !== 1)) throw new Error('Background SWD polling only supports CTRL/STAT reads');
+        if (opt.background && (this._swdPending.size || this._swdDpBank !== 0 || Date.now() - this._swdLastActivity < 100)) return null;
         const flags = (opt.flags || 0) & 0xFF;
         const timeoutMs = opt.timeoutMs || this._swdDefaultTimeoutMs;
         const seq = (opt.seq !== undefined) ? (opt.seq & 0xFFFF) : this._nextSwdSeq();
@@ -753,6 +758,13 @@ class EspSerial {
 
         const payload = this._buildSwdRequestPayload(op, flags, seq, args);
         const packet = this.buildPacket(payload, this.UART_PACKET_TYPE_SWD);
+        const selectsBank = op === 0x03 && payload[8] === 0 && payload[9] === 1 && payload[10] === 2;
+        const selectsAp = op === 0x10 || op === 0x11 || op === 0x12;
+        if (!opt.background) {
+            this._swdLastActivity = Date.now();
+            this._swdActivityVersion++;
+            if (selectsBank || selectsAp || op === 0x01 || op === 0x02) this._swdDpBank = null;
+        }
 
         return new Promise(async (resolve, reject) => {
             const timer = setTimeout(() => {
@@ -769,6 +781,14 @@ class EspSerial {
                 this._swdPending.delete(seq);
                 reject(err);
             }
+        }).then(response => {
+            if (response.status === 0 && response.ack === 1) {
+                if (selectsBank) this._swdDpBank = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint32(12, true) & 15;
+                if (selectsAp) this._swdDpBank = 0;
+            }
+            return response;
+        }).finally(() => {
+            if (!opt.background) this._swdLastActivity = Date.now();
         });
     }
 
@@ -1557,7 +1577,8 @@ class SwdPinControls {
             margin-bottom: 4px;
         }
 
-        .proto-grid input {
+        .proto-grid input,
+        .swd-toolbar input:not([type="checkbox"]) {
             width: 100%;
             padding: 8px;
             border: 1px solid #38485c;
@@ -1568,7 +1589,8 @@ class SwdPinControls {
             font-size: 13px;
         }
 
-        .proto-grid select {
+        .proto-grid select,
+        .swd-toolbar select {
             width: 100%;
             padding: 8px;
             border: 1px solid #38485c;
@@ -1624,7 +1646,7 @@ class SwdPinControls {
             overflow: hidden;
         }
 
-        .collapsible-group summary {
+        .collapsible-group > summary {
             list-style: none;
             cursor: pointer;
             padding: 10px 12px;
@@ -1636,17 +1658,17 @@ class SwdPinControls {
             user-select: none;
         }
 
-        .collapsible-group summary::-webkit-details-marker {
+        .collapsible-group > summary::-webkit-details-marker {
             display: none;
         }
 
-        .collapsible-group summary::before {
+        .collapsible-group > summary::before {
             content: '▸';
             color: #9aa8b7;
             margin-right: 8px;
         }
 
-        .collapsible-group[open] summary::before {
+        .collapsible-group[open] > summary::before {
             content: '▾';
         }
 
@@ -1732,8 +1754,8 @@ class SwdPinControls {
 
         .console-display {
             flex: 0 0 auto;
-            height: 420px;
-            height: 25lh;
+            height: 180px;
+            max-height: 30vh;
             background: #0f1620;
             border: 1px solid #2a3646;
             border-radius: 6px;
@@ -1783,6 +1805,36 @@ class SwdPinControls {
             overflow-x: auto;
             border-bottom: 1px solid #2a3646;
             margin-bottom: 0;
+        }
+
+        .swd-section { padding: 14px 0; border-bottom: 1px solid #2a3646; min-width: 0; }
+        .swd-section h2 { font-size: 14px; margin: 0 0 12px; color: #d4deea; }
+        .swd-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .swd-toolbar label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }
+        .swd-toolbar input:not([type="checkbox"]), .swd-toolbar select { width: auto; min-width: 0; max-width: 100%; }
+        .swd-details { margin-top: 12px; }
+        .swd-values { display: grid; grid-template-columns: minmax(100px, 160px) minmax(0, 1fr); gap: 8px 12px; margin: 10px 0; }
+        .swd-values dt { color: #9ca3af; }
+        .swd-values dd { margin: 0; overflow-wrap: anywhere; }
+        .swd-registers { white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0; }
+        .dp-lamps { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 12px 0; }
+        .dp-lamp::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: #687482; }
+        .dp-lamp[data-state="on"]::before { background: #79c991; }
+        .dp-lamp[data-state="error"]::before { background: #ef7c7c; }
+        .dp-lamp[data-state="waiting"]::before { background: #e8c368; }
+        .dp-bits { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+        .dp-bits label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+        #dpUpdateState { color: #9ca3af; font-size: 12px; }
+        #dpCtrlstat { display: inline-block; min-width: 10ch; }
+        #dpFaults { min-width: 145px; }
+        #dpWarnings { color: #efb48b; white-space: pre-wrap; overflow-wrap: anywhere; }
+        #dpActionControls { border: 0; padding: 0; margin: 0; min-width: 0; }
+        #dpActionControls input, #dpActionControls select { max-width: 100%; }
+        #deviceInteraction { border: 0; border-radius: 0; }
+        #apPanel { border: 0; border-radius: 0; background: transparent; white-space: normal; }
+        @media (max-width: 600px) {
+            .swd-values { grid-template-columns: minmax(80px, 110px) minmax(0, 1fr); }
+            .ap-panel { padding: 10px 0; }
         }
 
         .ap-tab {
@@ -2292,30 +2344,93 @@ class SwdPinControls {
             <div class="controls-section protocol-content" id="deviceInteraction" style="padding: 12px;">
                 <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
 
-                    <div style="display: flex; flex-direction: column; gap: 15px;">
-                        <div>
+                    <div style="display: flex; flex-direction: column; min-width: 0;">
+                        <section class="swd-section">
+                        <h2>SWD connection</h2>
+                        <div class="swd-toolbar">
+                            <button id="btnRunSWDTest" class="btn-secondary">Detect device</button>
+                            <span id="detectedPins">No target detected</span>
+                        </div>
+                        <details class="collapsible-group swd-details" id="swdPinDetails" open>
+                            <summary>Pin configuration</summary>
+                        <div class="collapsible-body">
                             <div style="margin-bottom: 8px; color: #d4deea; font-weight: 600;">Candidate GPIOs
                                 (SWD+SWC):</div>
                             <div id="ioGpioCheckboxes"></div>
                         </div>
-                        <button id="btnRunSWDTest"
-                            style="padding: 10px 20px; background: #1f2a38; color: #dbe4ef; border: 1px solid #334155; border-radius: 6px; cursor: pointer; font-weight: 700; align-self: flex-start; font-family: inherit;">Detect
-                            device</button>
-
-                        <div
-                            style="display: grid; grid-template-columns: 220px 1fr; gap: 10px; align-items: center; margin-top: 6px;">
-                            <div style="color: #9ca3af; font-weight: 600;">Detected Pins</div>
-                            <div id="detectedPins" style="font-family: inherit; color: #e5e7eb;">-</div>
-                            <div style="color: #9ca3af; font-weight: 600;">DPIDR / TARGETID</div>
-                            <div id="detectedIds" style="font-family: inherit; color: #e5e7eb;">-</div>
-                        </div>
-
-                        <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        </details>
+                        <details class="collapsible-group swd-details" id="dpDiagnostics">
+                            <summary>DP diagnostics</summary>
+                            <div class="collapsible-body">
+                            <div class="swd-toolbar">
+                                <span>CTRL/STAT <strong id="dpCtrlstat">-</strong></span>
+                                <span id="dpUpdateState">Not checked</span>
+                            </div>
+                            <div class="dp-lamps" aria-label="DP status">
+                                <span id="dpDebugPower" class="dp-lamp" data-state="unknown">Debug power</span>
+                                <span id="dpSystemPower" class="dp-lamp" data-state="unknown">System power</span>
+                                <span id="dpFaults" class="dp-lamp" data-state="unknown">Sticky flags</span>
+                            </div>
+                            <div id="dpWarnings" role="status" hidden></div>
+                            <details class="collapsible-group">
+                                <summary>Status bits</summary>
+                                <div class="collapsible-body dp-bits">
+                                    <label><input type="checkbox" data-dp-bit="28" disabled>Debug request</label>
+                                    <label><input type="checkbox" data-dp-bit="29" disabled>Debug ACK</label>
+                                    <label><input type="checkbox" data-dp-bit="30" disabled>System request</label>
+                                    <label><input type="checkbox" data-dp-bit="31" disabled>System ACK</label>
+                                    <label><input type="checkbox" data-dp-bit="26" disabled>Reset request</label>
+                                    <label><input type="checkbox" data-dp-bit="27" disabled>Reset ACK</label>
+                                    <label><input type="checkbox" data-dp-bit="6" disabled>Read OK</label>
+                                    <label><input type="checkbox" data-dp-bit="0" disabled>Overrun detect</label>
+                                    <label><input type="checkbox" data-dp-bit="1" disabled>Sticky overrun</label>
+                                    <label><input type="checkbox" data-dp-bit="4" disabled>Sticky compare</label>
+                                    <label><input type="checkbox" data-dp-bit="5" disabled>Sticky error</label>
+                                    <label><input type="checkbox" data-dp-bit="7" disabled>Write-data error</label>
+                                </div>
+                            </details>
+                            <fieldset id="dpActionControls" disabled>
+                                <div class="swd-toolbar">
+                                    <button class="btn-secondary" onclick="dpAction('clear')">Clear sticky errors</button>
+                                    <button class="btn-secondary" onclick="dpAction('power')">Request power-up</button>
+                                </div>
+                                <details class="collapsible-group swd-details">
+                                    <summary>Advanced DP registers</summary>
+                                    <div class="collapsible-body">
+                                    <dl class="swd-values">
+                                        <dt>DPIDR / TARGETID</dt><dd id="detectedIds">-</dd>
+                                    </dl>
+                                    <pre id="dpStatusOutput" class="swd-registers">No manual register read</pre>
+                                    <div class="swd-toolbar">
+                                        <label>Bank <input id="dpBankInput" type="number" min="0" max="15" value="0" style="width: 65px;"></label>
+                                        <label>Register <select id="dpRegisterInput">
+                                            <option value="0">0x00 DPIDR / ABORT</option>
+                                            <option value="1">0x04 CTRL/STAT (banked)</option>
+                                            <option value="2">0x08 RESEND / SELECT</option>
+                                            <option value="3">0x0C RDBUFF</option>
+                                        </select></label>
+                                        <label>Value <input id="dpValueInput" value="0x00000000" style="width: 130px;"></label>
+                                        <button class="btn-secondary" onclick="dpAction('read')">Read register</button>
+                                        <button class="btn-secondary" onclick="dpAction('write')">Write register</button>
+                                    </div>
+                                    </div>
+                                </details>
+                            </fieldset>
+                            </div>
+                        </details>
+                        </section>
+                        <section class="swd-section">
+                        <h2>Access ports</h2>
+                        <div class="swd-toolbar">
                             <button id="btnScanAps" class="btn-secondary" disabled>Scan APs</button>
-                            <button id="btnDpDebug" class="btn-secondary" disabled>DP Debug</button>
+                        </div>
+                        <details class="collapsible-group swd-details">
+                            <summary>Scan options</summary>
+                            <div class="collapsible-body">
+                            <div class="swd-toolbar">
                             <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
                                 Max APs
-                                <input id="apScanMaxInput" value="4"
+                                <input id="apScanMaxInput" type="number" min="1" max="256" value="4"
                                     style="width: 70px; padding: 8px; border: 1px solid #38485c; border-radius: 6px; background: #0f1620; color: #e5e7eb; font-family: inherit; font-size: 13px;" />
                             </label>
                             <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
@@ -2328,11 +2443,13 @@ class SwdPinControls {
                             </label>
                         </div>
 
+                            </div>
+                        </details>
                         <div style="margin-top: 8px;">
-                            <div style="margin-bottom: 8px; color: #d4deea; font-weight: 600;">AP Scan Results</div>
                             <div id="apTabs" class="ap-tabs"></div>
-                            <div id="apPanel" class="ap-panel">(not scanned)</div>
+                            <div id="apPanel" class="ap-panel">No access ports scanned</div>
                         </div>
+                        </section>
                     </div>
                 </div>
             </div>
@@ -2675,7 +2792,22 @@ class SwdPinControls {
                 </div>
             </div>
 
-            <div class="console-display" id="consoleDisplay"></div>
+            <details class="collapsible-group" id="consoleDetails">
+                <summary>Console <span id="consoleCount">0 messages</span></summary>
+                <div class="collapsible-body">
+                <div class="swd-toolbar" style="margin-bottom: 8px;">
+                    <label>Level <select id="consoleLevel" onchange="renderConsole()">
+                        <option value="all">All</option>
+                        <option value="error">Errors</option>
+                        <option value="log">Device logs</option>
+                        <option value="info">Info</option>
+                    </select></label>
+                    <label>Filter <input id="consoleFilter" type="search" oninput="renderConsole()"></label>
+                    <button class="btn-secondary" onclick="clearConsole()">Clear console</button>
+                </div>
+                <div class="console-display" id="consoleDisplay"></div>
+                </div>
+            </details>
         </div>
 
         <div class="footer">
@@ -6148,35 +6280,14 @@ class SwdPinControls {
                 lines.push(`DP SELECT(0): ack=${this.ackName(select.ack)}`);
                 const ctrl0 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
                 lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl0.ack)} value=${u32ToHex(ctrl0.value)}`);
-
-                /* On cold targets, AP reads can return 0 until power-up is requested/acked. */
-                try {
-                    const pu = await this.ensurePowerUp(800);
-                    lines.push(`DP POWERUP:     ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`);
-                } catch (e) {
-                    lines.push(`DP POWERUP:     ERROR: ${e.message}`);
-                }
-
-                const abort = await this.transferRaw(false, true, DP_A23_ABORT, 0x1E);
-                lines.push(`DP ABORT(0x1E): ack=${this.ackName(abort.ack)} (old firmware may force OK)`);
-
-                const ctrl1 = await this.transferRaw(false, false, DP_A23_CTRLSTAT, 0);
-                lines.push(`DP CTRL/STAT:   ack=${this.ackName(ctrl1.ack)} value=${u32ToHex(ctrl1.value)} (banked)`);
-
-                // Raw SELECT writes update the firmware's SELECT cache.
-
-                /* Use the same safe AP helpers (SELECT+RDBUFF handling) for debug probing. */
-                try {
-                    const idr0 = await this.apRead(0, AP_IDR, true);
-                    lines.push(`AP0 IDR:         ${u32ToHex(idr0)} (${apTypeName(decodeApIdr(idr0))})`);
-                } catch (e) {
-                    lines.push(`AP0 IDR:         ERROR: ${e.message}`);
-                }
-                try {
-                    const base0 = await this.apRead(0, AP_BASE, true);
-                    lines.push(`AP0 BASE:        ${u32ToHex(base0)}`);
-                } catch (e) {
-                    lines.push(`AP0 BASE:        ERROR: ${e.message}`);
+                this.dpStatus = { ack: select.ack === 1 ? ctrl0.ack : select.ack, value: ctrl0.value };
+                if (ctrl0.ack === 1 && select.ack === 1) {
+                    const value = ctrl0.value >>> 0;
+                    lines.push(`Debug power: request=${!!(value & CDBGPWRUPREQ)} acknowledged=${!!(value & CDBGPWRUPACK)}`);
+                    lines.push(`System power: request=${!!(value & CSYSPWRUPREQ)} acknowledged=${!!(value & CSYSPWRUPACK)}`);
+                    lines.push(`Sticky flags: overrun=${!!(value & 2)} compare=${!!(value & 16)} error=${!!(value & 32)} write-data=${!!(value & 128)}`);
+                } else {
+                    lines.push('CTRL/STAT decoding unavailable: bank selection or read failed');
                 }
 
                 return lines;
@@ -6760,7 +6871,6 @@ class SwdPinControls {
 
             const btnDetect = document.getElementById('btnRunSWDTest');
             const scanBtn = document.getElementById('btnScanAps');
-            const dpBtn = document.getElementById('btnDpDebug');
 
             const setDetectBtn = (active) => {
                 if (!btnDetect) return;
@@ -6774,6 +6884,7 @@ class SwdPinControls {
             };
 
             const resetSwdUi = () => {
+                setDpUiEnabled(false);
                 const pinsEl = document.getElementById('detectedPins');
                 const idsEl = document.getElementById('detectedIds');
                 const apTabsEl = document.getElementById('apTabs');
@@ -6822,7 +6933,6 @@ class SwdPinControls {
 
             resetSwdUi();
             if (scanBtn) scanBtn.disabled = true;
-            if (dpBtn) dpBtn.disabled = true;
 
             detectLoopActive = true;
             const myToken = ++detectLoopToken;
@@ -6889,7 +6999,9 @@ class SwdPinControls {
                     }
 
                     if (scanBtn) scanBtn.disabled = false;
-                    if (dpBtn) dpBtn.disabled = false;
+                    setDpUiEnabled(true);
+                    const pinDetails = document.getElementById('swdPinDetails');
+                    if (pinDetails) pinDetails.open = false;
 
                     try {
                         logToConsole(`SWD Detect: io_mask=${u32ToHex(ioMask)}`, 'info');
@@ -6898,12 +7010,12 @@ class SwdPinControls {
                         logToConsole(`DP power-up: ok=${pu.ok ? 1 : 0} CTRL/STAT=${u32ToHex(pu.ctrlstat)}`, pu.ok ? 'info' : 'error');
                     } catch (e) {
                         logToConsole(`DP power-up: ERROR: ${e.message}`, 'error');
-                        logToConsole('DP initialization failed; use DP Debug to inspect the link.', 'error');
+                        logToConsole('DP initialization failed; use DP diagnostics to inspect the link.', 'error');
                         if (scanBtn) scanBtn.disabled = true;
                         return;
                     }
 
-                    logToConsole('Ready: click DP Debug, then Scan APs', 'info');
+                    logToConsole('SWD target detected; ready to scan access ports', 'info');
                     return;
                 }
 
@@ -6915,19 +7027,163 @@ class SwdPinControls {
             }
         }
 
+        let dpMonitorTimer = null;
+        let dpMonitorBusy = false;
+        let dpMonitorGeneration = 0;
+
+        function renderDpStatus(status) {
+            const valid = status && status.ack === 1 && !status.error;
+            const value = valid ? status.value >>> 0 : 0;
+            const valueEl = document.getElementById('dpCtrlstat');
+            if (valueEl) valueEl.textContent = valid ? u32ToHex(value) : '-';
+            for (const input of document.querySelectorAll('[data-dp-bit]')) {
+                input.checked = valid && !!(value & (2 ** Number(input.dataset.dpBit)));
+                input.indeterminate = !valid;
+            }
+            const lamp = (id, state, description) => {
+                const element = document.getElementById(id);
+                if (!element) return;
+                element.dataset.state = valid ? state : 'unknown';
+                element.title = valid ? description : 'No current status';
+            };
+            lamp('dpDebugPower', value & CDBGPWRUPACK ? 'on' : value & CDBGPWRUPREQ ? 'waiting' : 'off', value & CDBGPWRUPACK ? 'Acknowledged' : value & CDBGPWRUPREQ ? 'Requested, not acknowledged' : 'Not requested');
+            lamp('dpSystemPower', value & CSYSPWRUPACK ? 'on' : value & CSYSPWRUPREQ ? 'waiting' : 'off', value & CSYSPWRUPACK ? 'Acknowledged' : value & CSYSPWRUPREQ ? 'Requested, not acknowledged' : 'Not requested');
+            lamp('dpFaults', value & 0xB2 ? 'error' : 'on', value & 0xB2 ? 'Sticky flags set' : 'No sticky flags');
+            const faults = document.getElementById('dpFaults');
+            if (faults) faults.textContent = valid ? value & 0xB2 ? 'Sticky flags set' : 'No sticky flags' : 'Sticky flags';
+            const warnings = [];
+            if (status && !valid) warnings.push(status.error || `SWD ${swd.ackName(status.ack)}`);
+            if (valid) {
+                for (const [mask, name] of [[2, 'Sticky overrun'], [16, 'Sticky compare'], [32, 'Sticky error'], [128, 'Write-data error']]) {
+                    if (value & mask) warnings.push(name);
+                }
+                if ((value & CDBGPWRUPREQ) && !(value & CDBGPWRUPACK)) warnings.push('Debug power-up awaiting acknowledgement');
+                if ((value & CSYSPWRUPREQ) && !(value & CSYSPWRUPACK)) warnings.push('System power-up awaiting acknowledgement');
+            }
+            const warningEl = document.getElementById('dpWarnings');
+            if (warningEl) {
+                const text = warnings.join('\n');
+                if (warningEl.textContent !== text) warningEl.textContent = text;
+                warningEl.hidden = warnings.length === 0;
+            }
+            const updated = document.getElementById('dpUpdateState');
+            if (updated) updated.textContent = status ? `Updated ${new Date().toLocaleTimeString()}` : 'Not checked';
+        }
+
+        async function pollDpStatus() {
+            if (dpMonitorBusy) return;
+            const serial = espSerial;
+            const target = swd;
+            const updated = document.getElementById('dpUpdateState');
+            if (!target || !serial?.port) {
+                stopDpMonitor();
+                renderDpStatus(null);
+                return;
+            }
+            if (activeProtocolTab !== 'swd' || scanInProgress || detectLoopActive || document.getElementById('dpActionControls').disabled || document.getElementById('btnRunSWDTest')?.disabled) {
+                if (updated) updated.textContent = 'Paused during SWD activity';
+                return;
+            }
+            const generation = dpMonitorGeneration;
+            const version = serial._swdActivityVersion;
+            dpMonitorBusy = true;
+            try {
+                const args = new Uint8Array([0, 0, DP_A23_CTRLSTAT, 0, 0, 0, 0, 0]);
+                const response = await serial.swdRequest(SWD_UART_OP_TRANSFER, args, { background: true, timeoutMs: 1500 });
+                if (generation !== dpMonitorGeneration || target !== swd || serial !== espSerial || !serial.port || version !== serial._swdActivityVersion) return;
+                if (!response) {
+                    if (updated) updated.textContent = serial._swdDpBank === 0 ? 'Paused during SWD activity' : 'Paused: DP bank 0 not selected';
+                    return;
+                }
+                if (response.ack === 1 && (response.status !== SWD_UART_STATUS_OK || response.data?.length < 4 || !response.data)) throw new Error('Invalid DP status response');
+                const value = response.ack === 1 ? readU32LE(response.data, 0) : 0;
+                renderDpStatus({ ack: response.ack, value });
+            } catch (error) {
+                if (generation === dpMonitorGeneration && target === swd && serial === espSerial && version === serial._swdActivityVersion) renderDpStatus({ error: error.message });
+            } finally {
+                dpMonitorBusy = false;
+            }
+        }
+
+        function stopDpMonitor() {
+            if (dpMonitorTimer !== null) clearInterval(dpMonitorTimer);
+            dpMonitorTimer = null;
+            dpMonitorGeneration++;
+        }
+
+        function setDpUiEnabled(enabled) {
+            const controls = document.getElementById('dpActionControls');
+            if (controls) controls.disabled = !enabled;
+            const output = document.getElementById('dpStatusOutput');
+            if (!enabled) {
+                stopDpMonitor();
+                renderDpStatus(null);
+                if (output) output.textContent = 'No manual register read';
+            } else if (dpMonitorTimer === null) {
+                const details = document.getElementById('dpDiagnostics');
+                if (details) details.open = true;
+                dpMonitorTimer = setInterval(pollDpStatus, 500);
+            }
+        }
+
         async function dpDebug() {
             if (!swd) {
                 logToConsole('SWD not initialized', 'error');
                 return;
             }
             try {
-                logToConsole('DP debug: running raw DP/AP probes...', 'info');
                 const lines = await swd.dpDebugOnce();
-                for (const l of lines) {
-                    logToConsole(l, 'info');
-                }
+                const output = document.getElementById('dpStatusOutput');
+                if (output) output.textContent = lines.join('\n');
+                renderDpStatus(swd.dpStatus);
             } catch (err) {
-                logToConsole(`DP debug error: ${err.message}`, 'error');
+                const output = document.getElementById('dpStatusOutput');
+                if (output) output.textContent = `Status read failed: ${err.message}`;
+                renderDpStatus({ error: err.message });
+                logToConsole(`DP status error: ${err.message}`, 'error');
+            }
+        }
+
+        async function dpAction(action) {
+            const controls = document.getElementById('dpActionControls');
+            if (!swd || !espSerial?.port || controls.disabled || document.getElementById('btnRunSWDTest')?.disabled || scanInProgress || detectLoopActive) return;
+            const output = document.getElementById('dpStatusOutput');
+            const target = swd;
+            const buttons = [...document.querySelectorAll('#deviceInteraction button, #deviceInteraction input, #deviceInteraction select')];
+            const disabled = buttons.map(button => button.disabled);
+            buttons.forEach(button => { button.disabled = true; });
+            controls.disabled = true;
+            try {
+                if (action === 'status') {
+                    await dpDebug();
+                } else if (action === 'clear') {
+                    await swd.clearStickyErrors();
+                    await dpDebug();
+                } else if (action === 'power') {
+                    await swd.ensurePowerUp(1200);
+                    await dpDebug();
+                } else {
+                    const bank = parseHexOrDec(document.getElementById('dpBankInput').value);
+                    const register = Number(document.getElementById('dpRegisterInput').value);
+                    if (!Number.isInteger(bank) || bank < 0 || bank > 15) throw new Error('DP bank must be 0..15');
+                    if (action === 'write') {
+                        const value = parseHexOrDec(document.getElementById('dpValueInput').value) >>> 0;
+                        if (!confirm(`Write ${u32ToHex(value)} to DP register 0x${(register * 4).toString(16)}, bank ${bank}?`)) return;
+                        if (register === DP_A23_CTRLSTAT) await swd.dpWrite(DP_A23_SELECT, bank);
+                        await swd.dpWrite(register, value);
+                        output.textContent = `DP write completed: register 0x${(register * 4).toString(16)}, bank ${bank}, value ${u32ToHex(value)}`;
+                    } else {
+                        if (register === DP_A23_CTRLSTAT) await swd.dpWrite(DP_A23_SELECT, bank);
+                        const value = await swd.dpRead(register);
+                        output.textContent = `DP read: register 0x${(register * 4).toString(16)}, bank ${bank}, value ${u32ToHex(value)}`;
+                    }
+                }
+            } catch (error) {
+                output.textContent = `DP action failed: ${error.message}`;
+                logToConsole(output.textContent, 'error');
+            } finally {
+                if (swd === target && espSerial?.port) buttons.forEach((button, index) => { button.disabled = disabled[index]; });
+                controls.disabled = swd !== target || !espSerial?.port;
             }
         }
 
@@ -7084,8 +7340,17 @@ class SwdPinControls {
                 if (ed) {
                     ed.setData(bytes, addr);
                 }
+                apInfo.accessStatus = `Read OK at ${u32ToHex(addr)} (${bytes.length} bytes)`;
+                const status = document.getElementById('apAccessStatus');
+                if (status) status.textContent = apInfo.accessStatus;
                 logToConsole(`AP${activeAp} ReadBlock @${u32ToHex(addr)} words=${words} mode=${useBlock ? 'block' : 'single'}`, 'info');
             } catch (err) {
+                const apInfo = scannedAps.find(ap => ap.ap === activeAp);
+                if (apInfo) {
+                    apInfo.accessStatus = `Read failed: ${err.message}`;
+                    const status = document.getElementById('apAccessStatus');
+                    if (status) status.textContent = apInfo.accessStatus;
+                }
                 logToConsole(`ReadBlock error: ${err.message}`, 'error');
                 showToast(`Read block failed: ${err.message}`, 'error');
             }
@@ -7108,8 +7373,7 @@ class SwdPinControls {
                 btn.dataset.ap = String(a.ap);
                 const info = a.info;
                 const t = apTypeName(info);
-                const marker = (memAp !== null && memAp !== undefined && a.ap === memAp) ? ' *' : '';
-                btn.textContent = `AP${a.ap}${marker} ${t}`;
+                btn.textContent = `AP${a.ap} \u00b7 ${t}`;
                 btn.title = `${t}  IDR=${u32ToHex(a.idr)}`;
                 btn.onclick = () => setActiveAp(a.ap);
                 tabsEl.appendChild(btn);
@@ -7149,15 +7413,10 @@ class SwdPinControls {
             const info = a.info;
             const t = apTypeName(info);
             const baseStr = (a.base === null || a.base === undefined) ? '-' : u32ToHex(a.base);
-            const designerStr = info ? `designer=0x${info.designer.toString(16)}` : '';
 
             const isMem = !!(info && info.ap_class === 0x08);
 
             panelEl.innerHTML = '';
-
-            const hdr = document.createElement('div');
-            hdr.textContent = `AP${a.ap}: IDR=${u32ToHex(a.idr)}  ${t}  ${designerStr}  BASE=${baseStr}`;
-            panelEl.appendChild(hdr);
 
             const subTabsEl = document.createElement('div');
             subTabsEl.className = 'ap-subtabs';
@@ -7190,7 +7449,7 @@ class SwdPinControls {
             let selected = apSubTabState.get(a.ap) || 'info';
             if (!isMem && selected !== 'info') selected = 'info';
 
-            const debugSupport = { state: 'unknown', cpuid: null };
+            const debugSupport = { state: 'unknown', cpuid: null, error: null };
             async function probeDebugSupport() {
                 if (!isMem) {
                     debugSupport.state = 'no-mem';
@@ -7201,9 +7460,14 @@ class SwdPinControls {
                     const v = await swd.coreCpuidVia(a.ap);
                     debugSupport.state = 'ok';
                     debugSupport.cpuid = v >>> 0;
+                    if (!v || (v >>> 0) === 0xffffffff) {
+                        debugSupport.state = 'fail';
+                        debugSupport.error = `No CPU identified (CPUID ${u32ToHex(v)})`;
+                    }
                 } catch (e) {
                     debugSupport.state = 'fail';
                     debugSupport.cpuid = null;
+                    debugSupport.error = e.message;
                 }
                 return debugSupport;
             }
@@ -7222,11 +7486,11 @@ class SwdPinControls {
                 subBtnById.set(id, btn);
             };
 
-            addSubTab('info', 'Info', true);
+            addSubTab('info', 'Overview', true);
             addSubTab('hex', 'Hex dump', isMem);
             addSubTab('memory-scan', 'Memory scan', isMem);
             addSubTab('coresight', 'CoreSight', isMem);
-            addSubTab('debug', 'Debugging', isMem);
+            addSubTab('debug', 'Cortex-M debug', isMem);
 
             async function selectSubTab(id) {
                 if (!isMem && id !== 'info') id = 'info';
@@ -7250,23 +7514,46 @@ class SwdPinControls {
                 return u32ToHex(v >>> 0);
             }
 
+            const summary = document.createElement('dl');
+            summary.className = 'swd-values';
+            for (const [label, value] of [
+                ['Identification', 'Detected'],
+                ['Interface', t],
+                ['Memory access', a.accessStatus || 'Not checked'],
+                ['CPU debug', 'Not checked'],
+            ]) {
+                const term = document.createElement('dt');
+                term.textContent = label;
+                const description = document.createElement('dd');
+                description.textContent = label === 'Memory access' && !isMem ? 'No MEM-AP interface advertised' : value;
+                if (label === 'Memory access') description.id = 'apAccessStatus';
+                if (label === 'CPU debug') description.id = 'apCpuStatus';
+                summary.append(term, description);
+            }
+            pageInfo.appendChild(summary);
+            const registerDetails = document.createElement('details');
+            registerDetails.className = 'collapsible-group swd-details';
+            const registerSummary = document.createElement('summary');
+            registerSummary.textContent = 'AP registers and identification';
+            registerDetails.appendChild(registerSummary);
+            const registerBody = document.createElement('div');
+            registerBody.className = 'collapsible-body';
+            registerDetails.appendChild(registerBody);
+            pageInfo.appendChild(registerDetails);
+
             const apInfoBox = document.createElement('div');
             apInfoBox.style.whiteSpace = 'pre-wrap';
             apInfoBox.style.marginTop = '8px';
-            apInfoBox.style.padding = '8px';
-            apInfoBox.style.border = '1px solid #374151';
-            apInfoBox.style.borderRadius = '6px';
-            apInfoBox.style.background = '#0b1220';
+            apInfoBox.style.overflowWrap = 'anywhere';
             apInfoBox.textContent = '(not loaded)';
 
             async function refreshApInfo() {
                 const lines = [];
-                lines.push(`AP${a.ap}`);
-                lines.push(`APIDR: ${u32ToHex(a.idr)} (${t})`);
+                lines.push(`Scan IDR: ${u32ToHex(a.idr)}`);
                 if (info) {
                     lines.push(`  REV=${info.rev}  JEP106(designer)=0x${info.designer.toString(16)}  CLASS=0x${info.ap_class.toString(16)}  VAR=0x${info.variant.toString(16)}  TYPE=0x${info.type.toString(16)}`);
                 }
-                lines.push(`BASE:  ${baseStr}`);
+                lines.push(`Scan BASE: ${baseStr}`);
 
                 try {
                     const idrNow = await swd.apRead(a.ap, AP_IDR, true);
@@ -7321,12 +7608,12 @@ class SwdPinControls {
                 }
             };
 
-            ops.appendChild(btnRefreshInfo);
+            pageInfo.insertBefore(btnRefreshInfo, registerDetails);
             ops.appendChild(document.createTextNode('Reg off:'));
             ops.appendChild(regOff);
             ops.appendChild(regBtn);
-            pageInfo.appendChild(ops);
-            pageInfo.appendChild(apInfoBox);
+            registerBody.appendChild(ops);
+            registerBody.appendChild(apInfoBox);
 
             if (isMem) {
                 const scanOptions = document.createElement('div');
@@ -7376,7 +7663,18 @@ class SwdPinControls {
                 let openingMemoryRegion = false;
                 const stateNames = { data: 'Data', zero: '00', ff: 'FF', mixed: 'Mixed 00/FF', fault: 'Access error' };
                 const scanner = new MemoryScanner({
-                    read: (address, words) => swd.memReadBlock32Via(a.ap, address, words),
+                    read: async (address, words) => {
+                        try {
+                            const data = await swd.memReadBlock32Via(a.ap, address, words);
+                            a.accessStatus = `Read OK at ${u32ToHex(address)} (${words * 4} bytes)`;
+                            return data;
+                        } catch (error) {
+                            a.accessStatus = `Read failed at ${u32ToHex(address)}: ${error.message}`;
+                            throw error;
+                        } finally {
+                            if (activeAp === a.ap) document.getElementById('apAccessStatus').textContent = a.accessStatus;
+                        }
+                    },
                     recover: () => swd.clearStickyErrors(true),
                     onUpdate: () => renderMemoryMap()
                 });
@@ -7698,10 +7996,12 @@ class SwdPinControls {
                         return;
                     }
                     if (debugSupport.state === 'ok') {
-                        dbgBanner.textContent = `CPUID: ${u32ToHex(debugSupport.cpuid)} (core debug likely supported)`;
+                        dbgBanner.textContent = `CPUID read: ${u32ToHex(debugSupport.cpuid)}`;
+                        document.getElementById('apCpuStatus').textContent = dbgBanner.textContent;
                         return;
                     }
-                    dbgBanner.textContent = 'Core debug not supported or access denied.';
+                    dbgBanner.textContent = `CPUID read failed: ${debugSupport.error || 'Unknown error'}`;
+                    document.getElementById('apCpuStatus').textContent = dbgBanner.textContent;
                 }
 
                 const coreRow = document.createElement('div');
@@ -8355,27 +8655,38 @@ class SwdPinControls {
 
         /* ============= Core UI and Connection Functions ============= */
 
-        function logToConsole(message, level = 'info') {
+        function renderConsole() {
             const consoleEl = document.getElementById('consoleDisplay');
             if (!consoleEl) return;
+            const level = document.getElementById('consoleLevel')?.value || 'all';
+            const query = (document.getElementById('consoleFilter')?.value || '').toLowerCase();
+            const visible = consoleLineBuffer.filter(entry => (level === 'all' || entry.level === level) && entry.message.toLowerCase().includes(query));
+            consoleEl.textContent = visible.map(entry => `${entry.time} [${entry.level.toUpperCase()}] ${entry.message}${entry.count > 1 ? ` (\u00d7${entry.count})` : ''}`).join('\n');
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+            const count = document.getElementById('consoleCount');
+            if (count) count.textContent = `${consoleLineBuffer.reduce((total, entry) => total + entry.count, 0)} messages`;
+        }
 
-            const now = new Date().toLocaleTimeString();
-            const levelTag = level ? `[${level.toUpperCase()}]` : '';
-            const line = `${now} ${levelTag} ${message}`;
-
-            consoleLineBuffer.push(line);
+        function logToConsole(message, level = 'info') {
+            message = String(message);
+            level = level || 'info';
+            const last = consoleLineBuffer.at(-1);
+            const time = new Date().toLocaleTimeString();
+            if (last && last.message === message && last.level === level) {
+                last.count++;
+                last.time = time;
+            } else {
+                consoleLineBuffer.push({ message, level, time, count: 1 });
+            }
             if (consoleLineBuffer.length > MAX_CONSOLE_LINES) {
                 consoleLineBuffer.splice(0, consoleLineBuffer.length - MAX_CONSOLE_LINES);
             }
-
-            consoleEl.textContent = consoleLineBuffer.join('\n') + '\n';
-            consoleEl.scrollTop = consoleEl.scrollHeight;
+            renderConsole();
         }
 
         function clearConsole() {
-            const consoleEl = document.getElementById('consoleDisplay');
             consoleLineBuffer.length = 0;
-            if (consoleEl) consoleEl.textContent = '';
+            renderConsole();
         }
 
         function getTadaaAudio() {
@@ -8482,9 +8793,6 @@ class SwdPinControls {
                     const scanBtn = document.getElementById('btnScanAps');
                     if (scanBtn) scanBtn.onclick = scanAps;
 
-                    const dpBtn = document.getElementById('btnDpDebug');
-                    if (dpBtn) dpBtn.onclick = dpDebug;
-
                     swd = new Swd(espSerial, logToConsole);
                 } else {
                     logToConsole('Connection failed', 'error');
@@ -8541,9 +8849,8 @@ class SwdPinControls {
                 uartLastConfig = null;
 
                 const scanBtn = document.getElementById('btnScanAps');
-                const dpBtn = document.getElementById('btnDpDebug');
                 if (scanBtn) scanBtn.disabled = true;
-                if (dpBtn) dpBtn.disabled = true;
+                setDpUiEnabled(false);
 
                 const pinsEl = document.getElementById('detectedPins');
                 const idsEl = document.getElementById('detectedIds');
@@ -8581,7 +8888,8 @@ class SwdPinControls {
                 if (scanInProgress) throw new Error('Wait for the AP scan to finish');
                 if (!detectLoopActive) await stopSwdOperations('GPIO configuration changed');
                 swd = null;
-                for (const id of ['btnScanAps', 'btnDpDebug']) document.getElementById(id).disabled = true;
+                setDpUiEnabled(false);
+                document.getElementById('btnScanAps').disabled = true;
                 document.getElementById('detectedPins').textContent = '-';
                 document.getElementById('detectedIds').textContent = '-';
                 document.getElementById('apTabs').innerHTML = '';
