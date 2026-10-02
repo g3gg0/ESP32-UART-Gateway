@@ -1,0 +1,230 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: radial-gradient(circle at 20% 20%, #1f2937 0%, #0b1220 40%, #070b15 75%);
+    min-height: 100vh;
+    padding: 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #e5e7eb;
+}
+
+.container {
+    max-width: 1000px;
+    width: 100%;
+    background: linear-gradient(180deg, rgba(31, 41, 55, 0.9), rgba(15, 23, 42, 0.95));
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 90vh;
+}
+
+.header {
+    background: linear-gradient(90deg, #1e3a8a, #0f172a);
+    padding: 20px;
+    border-bottom: 2px solid #3b82f6;
+}
+
+.header h1 {
+    font-size: 24px;
+    margin-bottom: 15px;
+}
+
+.connection-controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn-primary,
+.btn-secondary {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 600;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+}
+
+.btn-primary:disabled {
+    background: #6b7280;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.btn-secondary {
+    background: #6b7280;
+    color: white;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #4b5563;
+}
+
+.btn-secondary:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.connection-status {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    background: #ef4444;
+    color: white;
+}
+
+.connection-status.connected {
+    background: #10b981;
+}
+
+.main-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    padding: 20px;
+    gap: 15px;
+}
+
+.console-display {
+    flex: 0 0 50%;
+    background: #0f172a;
+    border: 1px solid #374151;
+    border-radius: 6px;
+    padding: 12px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: #a3e635;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    line-height: 1.4;
+}
+
+.console-display::-webkit-scrollbar {
+    width: 8px;
+}
+
+.console-display::-webkit-scrollbar-track {
+    background: #1f2937;
+    border-radius: 4px;
+}
+
+.console-display::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+}
+
+.console-display::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
+
+.controls-section {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 15px;
+    background: rgba(55, 65, 81, 0.3);
+    border-radius: 6px;
+}
+
+.gpio-controls {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+}
+
+.gpio-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.gpio-control input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.gpio-control label {
+    cursor: pointer;
+    user-select: none;
+    font-weight: 500;
+}
+
+.input-section {
+    display: flex;
+    gap: 10px;
+}
+
+.input-section input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #4b5563;
+    border-radius: 6px;
+    background: #1f2937;
+    color: #e5e7eb;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+}
+
+.input-section input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+}
+
+.input-section button {
+    padding: 10px 20px;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.input-section button:hover {
+    background: #2563eb;
+}
+
+.input-section button:active {
+    transform: scale(0.98);
+}
+
+.footer {
+    padding: 10px 20px;
+    border-top: 1px solid #374151;
+    font-size: 12px;
+    color: #9ca3af;
+    text-align: center;
+}

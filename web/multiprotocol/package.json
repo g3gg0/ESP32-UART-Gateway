@@ -1,0 +1,32 @@
+{
+  "template": "web/multiprotocol/shell.html",
+  "views": {
+    "swd": "web/multiprotocol/views/swd.html",
+    "can": "web/multiprotocol/views/can.html",
+    "uart": "web/multiprotocol/views/uart.html",
+    "ef": "web/multiprotocol/views/ef.html"
+  },
+  "styles": [
+    "web/multiprotocol/console.css"
+  ],
+  "scripts": [
+    "EspSerial.js",
+    "web/vendor/capstone.min.js",
+    "web/multiprotocol/js/swd/MemoryScanner.js",
+    "web/multiprotocol/js/swd/HexEditor.js",
+    "web/multiprotocol/js/swd/swd.js",
+    "web/multiprotocol/js/swd/protocol.js",
+    "web/multiprotocol/js/can/protocol.js",
+    "web/multiprotocol/js/uart/protocol.js",
+    "web/multiprotocol/js/ef/protocol.js",
+    "web/multiprotocol/js/app.js"
+  ],
+  "output": "multiprotocol.html",
+  "staticOutput": "multiprotocol.static.html",
+  "licenses": {
+    "web/vendor/capstone.min.js": "web/vendor/capstone.LICENSE"
+  },
+  "vendor": {
+    "web/vendor/capstone.min.js": "https://cdn.jsdelivr.net/npm/@alexaltea/capstone-js@3.0.5/dist/capstone.min.js"
+  }
+}

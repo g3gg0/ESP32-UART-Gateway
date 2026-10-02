@@ -1,0 +1,17 @@
+<template id="cc-view-RawRead">
+<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <div style="font-weight:600;">RawRead</div>
+
+    <select id="ccRawReadStorageSelect" style="width: 180px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+        <option value="0">SRAM (0)</option>
+        <option value="2">SFLASH (2)</option>
+    </select>
+
+    <input id="ccRawReadOffset" type="text" value="0" placeholder="offset (dec or 0x..)" style="width: 180px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+    <input id="ccRawReadSize" type="text" value="4096" placeholder="size (dec or 0x..)" style="width: 180px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+    <input id="ccRawReadFilename" type="text" value="raw_read.bin" placeholder="download filename" style="width: 200px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+
+    <button id="btnRun_RawRead" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Run</button>
+    <div style="color:#9ca3af; font-size:12px;"><span data-command-description></span></div>
+</div>
+</template>

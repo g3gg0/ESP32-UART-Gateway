@@ -1,0 +1,27 @@
+<template id="cc-view-SFFS">
+<div style="display:flex; flex-direction:column; gap:12px;">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <div style="font-weight:600;">SFFS</div>
+        <button id="btnSffsRefresh" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Refresh list</button>
+        <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-size:12px;">
+            <input id="sffsInactive" type="checkbox" style="cursor:pointer;">
+            Use inactive FAT
+        </label>
+        <div id="sffsStatus" style="color:#9ca3af; font-size:12px;"><span data-command-description></span></div>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <input id="sffsFilename" type="text" value="/sys/mcuimg.bin" placeholder="/path/file.bin" style="width: 260px; padding: 10px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-family: 'Courier New', monospace; font-size: 13px;">
+        <button id="btnSffsRead" style="padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 700;">Read / download</button>
+        <input id="sffsUpload" type="file" style="color:#9ca3af; font-size:12px;">
+        <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-size:12px;">
+            <input id="sffsCommit" type="checkbox" style="cursor:pointer;">
+            Commit (mirror)
+        </label>
+        <button id="btnSffsWrite" style="padding: 10px 20px; background: #f59e0b; color: #111827; border: none; border-radius: 6px; cursor: pointer; font-weight: 800;">Write / upload</button>
+        <button id="btnSffsErase" style="padding: 10px 20px; background: #ef4444; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 800;">Erase</button>
+    </div>
+
+    <div id="sffsList" style="padding:10px; border:1px solid #374151; border-radius:6px; background: rgba(15, 23, 42, 0.6); overflow:auto; max-height: 280px;"></div>
+</div>
+</template>

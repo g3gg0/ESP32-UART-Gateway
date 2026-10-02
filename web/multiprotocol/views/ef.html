@@ -1,0 +1,202 @@
+<div class="controls-section protocol-content" id="canonEfInteraction" style="padding: 12px;">
+                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                    <div class="protocol-tabs">
+                        <button class="protocol-tab active" id="canonEfTabRaw" onclick="setCanonEfView('raw')">Raw
+                            controls</button>
+                        <button class="protocol-tab" id="canonEfTabLens" onclick="setCanonEfView('lens')">Lens
+                            control</button>
+                        <button class="protocol-tab" id="canonEfTabScan" onclick="setCanonEfView('scan')">Command
+                            scan</button>
+                    </div>
+
+                    <div id="canonEfRawView">
+                        <div class="proto-grid">
+                            <div>
+                                <label for="canonEfDcl">DCL GPIO</label>
+                                <select id="canonEfDcl"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfDlc">DLC GPIO</label>
+                                <select id="canonEfDlc"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfLclkOut">LCLK out GPIO</label>
+                                <select id="canonEfLclkOut"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfLclkIn">LCLK in GPIO</label>
+                                <select id="canonEfLclkIn"></select>
+                            </div>
+                            <div>
+                                <label for="canonEfClock">Clock (Hz)</label>
+                                <input id="canonEfClock" value="200000" inputmode="numeric" />
+                            </div>
+                            <div>
+                                <button class="btn-primary" id="canonEfStartBtn" onclick="startCanonEf()"
+                                    disabled>Configure</button>
+                            </div>
+                            <div>
+                                <button class="btn-secondary" id="canonEfResetBtn" onclick="resetCanonEf()"
+                                    disabled>Reset lens</button>
+                            </div>
+                        </div>
+
+                        <div
+                            style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#9aa8b7; font-weight:700; font-size:12px;">
+                            <label><input id="canonEfInvertDcl" type="checkbox" checked /> Invert DCL</label>
+                            <label><input id="canonEfInvertDlc" type="checkbox" /> Invert DLC</label>
+                            <label><input id="canonEfInvertLclkOut" type="checkbox" checked /> Invert LCLK out</label>
+                            <label><input id="canonEfInvertLclkIn" type="checkbox" /> Invert LCLK in</label>
+                            <label for="canonEfAckMode">ACK mode</label>
+                            <select id="canonEfAckMode">
+                                <option value="normal">Normal</option>
+                                <option value="measurement" selected>Measurement</option>
+                                <option value="ignore">Ignore ACK</option>
+                            </select>
+                        </div>
+
+                        <div class="input-section">
+                            <input id="canonEfTxInput" placeholder="TX bytes, e.g. 00 00 00 AA BB" />
+                            <button class="btn-primary" id="canonEfSendBtn" onclick="sendCanonEf()"
+                                disabled>Transfer</button>
+                            <button class="btn-secondary" onclick="clearCanonEf()">Clear</button>
+                        </div>
+                        <div class="uart-rx-display" id="canonEfRxDisplay"></div>
+                    </div>
+
+                    <div id="canonEfLensView" style="display:none;">
+                        <div
+                            style="display:grid; grid-template-columns:minmax(0, 1fr) minmax(220px, 400px); gap:16px; align-items:start;">
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+                                    <button class="btn-primary" id="canonEfInitializeBtn"
+                                        onclick="initializeCanonEfLens()" disabled>Initialize</button>
+                                    <button class="btn-secondary" id="canonEfInfoBtn" onclick="readCanonEfLensInfo()"
+                                        disabled>Read lens info</button>
+                                </div>
+                                <div>
+                                    <div>
+                                        <label>Focus</label>
+                                        <div class="canon-ef-action-grid">
+                                            <button class="btn-secondary" id="canonEfFocusNearBtn"
+                                                onclick="focusCanonEfNear()" disabled>Near</button>
+                                            <button class="btn-secondary" id="canonEfFocusMinusBtn"
+                                                onclick="moveCanonEfFocus(-canonEfJumpSize('canonEfFocusStep'))"
+                                                disabled>-</button>
+                                            <select id="canonEfFocusStep" title="Focus jump size">
+                                                <option value="1">1</option>
+                                                <option value="10">10</option>
+                                                <option value="100" selected>100</option>
+                                            </select>
+                                            <button class="btn-secondary" id="canonEfFocusPlusBtn"
+                                                onclick="moveCanonEfFocus(canonEfJumpSize('canonEfFocusStep'))"
+                                                disabled>+</button>
+                                            <button class="btn-secondary" id="canonEfFocusInfinityBtn"
+                                                onclick="focusCanonEfInfinity()" disabled>Infinity</button>
+                                            <button class="btn-secondary" id="canonEfFocusCycleBtn"
+                                                onclick="toggleCanonEfFocusCycle()" disabled>Cycle</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div>
+                                        <label>Aperture</label>
+                                        <div class="canon-ef-action-grid">
+                                            <button class="btn-secondary" id="canonEfApertureOpenBtn"
+                                                onclick="moveCanonEfAperture(-128)" disabled>Open</button>
+                                            <button class="btn-secondary" id="canonEfApertureMinusBtn"
+                                                onclick="moveCanonEfAperture(-canonEfJumpSize('canonEfApertureStep'))"
+                                                disabled>-</button>
+                                            <select id="canonEfApertureStep" title="Aperture jump size">
+                                                <option value="1">1</option>
+                                                <option value="10">10</option>
+                                                <option value="100" selected>100</option>
+                                            </select>
+                                            <button class="btn-secondary" id="canonEfAperturePlusBtn"
+                                                onclick="moveCanonEfAperture(canonEfJumpSize('canonEfApertureStep'))"
+                                                disabled>+</button>
+                                            <button class="btn-secondary" id="canonEfApertureCloseBtn"
+                                                onclick="moveCanonEfAperture(127)" disabled>Close</button>
+                                            <button class="btn-secondary" id="canonEfApertureCycleBtn"
+                                                onclick="toggleCanonEfApertureCycle()" disabled>Cycle</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div>
+                                        <label>IS control</label>
+                                        <div
+                                            style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px;">
+                                            <button class="btn-secondary" id="canonEfIsEnableBtn"
+                                                onclick="setCanonEfIsRequested(true)" disabled>Enable</button>
+                                            <button class="btn-secondary" id="canonEfIsDisableBtn"
+                                                onclick="setCanonEfIsRequested(false)" disabled>Disable</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="uart-rx-display" id="canonEfLensResult"></div>
+                                <div class="uart-rx-display" id="canonEfTableDump"></div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <div class="status-box-lite"
+                                    style="display:grid; grid-template-columns:auto 1fr; gap:10px 14px; align-items:baseline;">
+                                    <span style="color:#9aa8b7; font-weight:700;">Lens Type</span><span
+                                        id="canonEfLensType">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Focal Length</span><span
+                                        id="canonEfLensFocalLength">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Lens Name</span><span
+                                        id="canonEfLensName">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Serial Number</span><span
+                                        id="canonEfLensSerial">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Focus Position</span><span
+                                        id="canonEfFocusPosition">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Zoom</span><span
+                                        id="canonEfZoom">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Status</span><span id="canonEfStatus"
+                                        style="white-space:pre;">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">IS Status</span><span
+                                        id="canonEfIsStatus" style="white-space:pre;">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Focus Distance</span><span
+                                        id="canonEfFocusDistance">-</span>
+                                    <span style="color:#9aa8b7; font-weight:700;">Aperture</span><span
+                                        id="canonEfAperture">-</span>
+                                </div>
+                                <div class="status-box-lite" id="canonEfLensTables"
+                                    style="font-size:12px; line-height:1.45; white-space:pre-wrap;">Parameter tables: -
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="canonEfScanView" style="display:none;">
+                        <div style="display:flex; flex-direction:column; gap:12px;">
+                            <div class="proto-grid">
+                                <div>
+                                    <label for="canonEfScanStart">Start opcode</label>
+                                    <input id="canonEfScanStart" value="0x00" inputmode="text" />
+                                </div>
+                                <div>
+                                    <label for="canonEfScanEnd">End opcode</label>
+                                    <input id="canonEfScanEnd" value="0xFF" inputmode="text" />
+                                </div>
+                                <div>
+                                    <label for="canonEfScanSyncCount">Sync byte count</label>
+                                    <input id="canonEfScanSyncCount" value="5" inputmode="numeric" />
+                                </div>
+                                <div>
+                                    <button class="btn-primary" id="canonEfScanBtn" onclick="scanCanonEfCommands()"
+                                        disabled>Scan</button>
+                                </div>
+                                <div>
+                                    <button class="btn-secondary canon-ef-scan-cycle" id="canonEfScanCycleBtn"
+                                        onclick="toggleCanonEfScanCycle()" disabled>Cycle</button>
+                                </div>
+                            </div>
+                            <div class="status-box-lite">Sends each opcode followed by the selected number of
+                                <code>0A</code> bytes. The displayed value removes one leading and one trailing
+                                <code>AA</code> sync reply when present.</div>
+                            <div class="uart-rx-display" id="canonEfScanResult"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>

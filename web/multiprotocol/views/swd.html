@@ -1,0 +1,109 @@
+<div class="controls-section protocol-content" id="deviceInteraction" style="padding: 12px;">
+                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+
+                    <div style="display: flex; flex-direction: column; min-width: 0;">
+                        <section class="swd-section">
+                        <h2>SWD connection</h2>
+                        <div class="swd-toolbar">
+                            <button id="btnRunSWDTest" class="btn-secondary">Detect device</button>
+                            <span id="detectedPins">No target detected</span>
+                        </div>
+                        <details class="collapsible-group swd-details" id="swdPinDetails" open>
+                            <summary>Pin configuration</summary>
+                        <div class="collapsible-body">
+                            <div style="margin-bottom: 8px; color: #d4deea; font-weight: 600;">Candidate GPIOs
+                                (SWD+SWC):</div>
+                            <div id="ioGpioCheckboxes"></div>
+                        </div>
+                        </details>
+                        <details class="collapsible-group swd-details" id="dpDiagnostics">
+                            <summary>DP diagnostics</summary>
+                            <div class="collapsible-body">
+                            <div class="swd-toolbar">
+                                <span>CTRL/STAT <strong id="dpCtrlstat">-</strong></span>
+                                <span id="dpUpdateState">Not checked</span>
+                            </div>
+                            <div class="dp-lamps" aria-label="DP status">
+                                <span id="dpDebugPower" class="dp-lamp" data-state="unknown">Debug power</span>
+                                <span id="dpSystemPower" class="dp-lamp" data-state="unknown">System power</span>
+                                <span id="dpFaults" class="dp-lamp" data-state="unknown">Sticky flags</span>
+                            </div>
+                            <div class="dp-bits" aria-label="DP status bits">
+                                    <label><input type="checkbox" data-dp-bit="28" disabled>Debug request</label>
+                                    <label><input type="checkbox" data-dp-bit="29" disabled>Debug ACK</label>
+                                    <label><input type="checkbox" data-dp-bit="30" disabled>System request</label>
+                                    <label><input type="checkbox" data-dp-bit="31" disabled>System ACK</label>
+                                    <label><input type="checkbox" data-dp-bit="26" disabled>Reset request</label>
+                                    <label><input type="checkbox" data-dp-bit="27" disabled>Reset ACK</label>
+                                    <label><input type="checkbox" data-dp-bit="6" disabled>Read OK</label>
+                                    <label><input type="checkbox" data-dp-bit="0" disabled>Overrun detect</label>
+                                    <label><input type="checkbox" data-dp-bit="1" disabled>Sticky overrun</label>
+                                    <label><input type="checkbox" data-dp-bit="4" disabled>Sticky compare</label>
+                                    <label><input type="checkbox" data-dp-bit="5" disabled>Sticky error</label>
+                                    <label><input type="checkbox" data-dp-bit="7" disabled>Write-data error</label>
+                            </div>
+                            <div id="dpWarnings" role="status" hidden></div>
+                            <fieldset id="dpActionControls" disabled>
+                                <div class="swd-toolbar">
+                                    <button id="dpClearStickyBtn" class="btn-secondary" onclick="dpAction('clear')" hidden>Clear sticky errors</button>
+                                    <button id="dpPowerUpBtn" class="btn-secondary" onclick="dpAction('power')" hidden>Request power-up</button>
+                                </div>
+                                <details class="collapsible-group swd-details">
+                                    <summary>Advanced DP registers</summary>
+                                    <div class="collapsible-body">
+                                    <dl class="swd-values">
+                                        <dt>DPIDR / TARGETID</dt><dd id="detectedIds">-</dd>
+                                    </dl>
+                                    <pre id="dpStatusOutput" class="swd-registers">No manual register read</pre>
+                                    <div class="swd-toolbar">
+                                        <label>Bank <input id="dpBankInput" type="number" min="0" max="15" value="0" style="width: 65px;"></label>
+                                        <label>Register <select id="dpRegisterInput">
+                                            <option value="0">0x00 DPIDR / ABORT</option>
+                                            <option value="1">0x04 CTRL/STAT (banked)</option>
+                                            <option value="2">0x08 RESEND / SELECT</option>
+                                            <option value="3">0x0C RDBUFF</option>
+                                        </select></label>
+                                        <label>Value <input id="dpValueInput" value="0x00000000" style="width: 130px;"></label>
+                                        <button class="btn-secondary" onclick="dpAction('read')">Read register</button>
+                                        <button class="btn-secondary" onclick="dpAction('write')">Write register</button>
+                                    </div>
+                                    </div>
+                                </details>
+                            </fieldset>
+                            </div>
+                        </details>
+                        </section>
+                        <section class="swd-section">
+                        <h2>Access ports</h2>
+                        <div class="swd-toolbar">
+                            <button id="btnScanAps" class="btn-secondary" disabled>Scan APs</button>
+                        </div>
+                        <details class="collapsible-group swd-details">
+                            <summary>Scan options</summary>
+                            <div class="collapsible-body">
+                            <div class="swd-toolbar">
+                            <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
+                                Max APs
+                                <input id="apScanMaxInput" type="number" min="1" max="256" value="4"
+                                    style="width: 70px; padding: 8px; border: 1px solid #38485c; border-radius: 6px; background: #0f1620; color: #e5e7eb; font-family: inherit; font-size: 13px;" />
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
+                                <input id="chkFullApScan" type="checkbox" />
+                                Full scan (slow)
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; color:#9ca3af; font-weight:600;">
+                                <input id="chkVerboseSwd" type="checkbox" />
+                                Verbose SWD logs
+                            </label>
+                        </div>
+
+                            </div>
+                        </details>
+                        <div style="margin-top: 8px;">
+                            <div id="apTabs" class="ap-tabs"></div>
+                            <div id="apPanel" class="ap-panel">No access ports scanned</div>
+                        </div>
+                        </section>
+                    </div>
+                </div>
+            </div>

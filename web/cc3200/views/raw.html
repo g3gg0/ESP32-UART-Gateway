@@ -1,0 +1,43 @@
+<template id="cc-view-Raw">
+<div style="display:flex; flex-direction:column; gap:12px;">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <div style="font-weight:600;">Raw</div>
+        <div style="color:#9ca3af; font-size:12px;"><span data-command-description></span></div>
+    </div>
+
+    <div class="controls-section" style="padding: 12px; margin:0;">
+        <div class="gpio-controls">
+            <div class="gpio-control">
+                <input type="checkbox" id="resetCheckbox" onchange="setResetGpio(!this.checked)">
+                <label for="resetCheckbox">Reset</label>
+            </div>
+            <div class="gpio-control">
+                <input type="checkbox" id="controlCheckbox" onchange="setControlGpio(this.checked)">
+                <label for="controlCheckbox">SOP2</label>
+            </div>
+            <button class="btn-primary" onclick="sendBreak()" style="padding: 8px 16px; font-size: 13px;">Break</button>
+            <input type="number" id="breakLenInput" value="255" min="0" max="255" placeholder="Bit count" style="width: 120px; padding: 8px; border: 1px solid #4b5563; border-radius: 6px; background: #1f2937; color: #e5e7eb; font-size: 12px;">
+        </div>
+    </div>
+
+    <div class="input-section" style="margin:0;">
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <label style="display: flex; align-items: center; gap: 6px;">
+                <input type="radio" name="sendMode" value="hex" checked onchange="updateSendMode()" style="cursor: pointer;">
+                Hex
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px;">
+                <input type="radio" name="sendMode" value="cc3200" onchange="updateSendMode()" style="cursor: pointer;">
+                CC3200
+            </label>
+        </div>
+        <input type="text" id="hexInput" placeholder="Hex bytes: DD EE AA DD BE EF" onkeypress="handleHexKeyPress(event)" style="font-size: 12px; flex: 1;">
+        <button onclick="sendData()" style="font-size: 13px;">Send</button>
+    </div>
+
+    <div class="input-section" style="margin:0;">
+        <input type="text" id="commandInput" placeholder="Enter command or text..." onkeypress="handleKeyPress(event)">
+        <button onclick="sendCommand()">Send</button>
+    </div>
+</div>
+</template>

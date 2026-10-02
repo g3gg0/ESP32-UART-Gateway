@@ -1,0 +1,45 @@
+<div class="controls-section protocol-content" id="canInteraction" style="padding: 12px;">
+                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                    <div class="proto-grid">
+                        <div>
+                            <label for="canRx">RX GPIO</label>
+                            <select id="canRx"></select>
+                        </div>
+                        <div>
+                            <label for="canTx">TX GPIO</label>
+                            <select id="canTx"></select>
+                        </div>
+                        <div>
+                            <label for="canBaud">Baud (kbit/s)</label>
+                            <input id="canBaud" value="500" />
+                        </div>
+                        <div>
+                            <button class="btn-primary" id="startCanBtn" onclick="startCan()" disabled>Start</button>
+                        </div>
+                        <div>
+                            <button class="btn-secondary" onclick="clearCanMessages()">Clear</button>
+                        </div>
+                    </div>
+
+                    <div class="can-panel">
+                        <div class="can-panel-title">CAN Message View (last frame per ID)</div>
+                        <div class="can-table-wrap">
+                            <table class="can-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 16%;">Message ID</th>
+                                        <th style="width: 16%;">Timestamp</th>
+                                        <th style="width: 10%;">Δt</th>
+                                        <th style="width: 8%;">Flags</th>
+                                        <th style="width: 8%;">Alerts</th>
+                                        <th style="width: 8%;">DLC</th>
+                                        <th style="width: 26%;">Payload</th>
+                                        <th style="width: 8%;">Frames</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="canMessageTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>

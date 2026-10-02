@@ -1,0 +1,24 @@
+<div id="flashTool" class="tab-pane active">
+                <div class="section" style="display: none;">
+                    <h2>📁 Load Configuration</h2>
+                    <div id="fileList" class="file-list" style="display: none;"></div>
+                </div>
+
+                <div class="section">
+                    <h2>📡 Flash Device</h2>
+                    <div class="status-box error" id="webSerialNoticeFlash" style="display: none;"></div>
+                    <button id="connectBtn" onclick="connectAndFlash()" disabled>Connect & Flash</button>
+                    <button id="disconnectBtn" onclick="disconnect()" disabled
+                        style="display: none;">Disconnect</button>
+                    <div class="progress-bar" style="display: none;">
+                        <div class="progress-fill" id="progressBar">0%</div>
+                    </div>
+                </div>
+
+                <div class="section" style="display: none;" id="logSection">
+                    <h2>📝 Log</h2>
+                    <div class="log-container" id="logContainer">
+                        <div class="log-entry log-info">Ready. Built-in config loaded; connect to flash.</div>
+                    </div>
+                </div>
+            </div>

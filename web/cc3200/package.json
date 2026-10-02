@@ -1,0 +1,34 @@
+{
+  "template": "web/cc3200/shell.html",
+  "views": {
+    "raw": "web/cc3200/views/raw.html",
+    "switchtoapps": "web/cc3200/views/switchtoapps.html",
+    "rawread": "web/cc3200/views/rawread.html",
+    "getstorageinfo": "web/cc3200/views/getstorageinfo.html",
+    "getstoragelist": "web/cc3200/views/getstoragelist.html",
+    "getversion": "web/cc3200/views/getversion.html",
+    "sffs": "web/cc3200/views/sffs.html",
+    "storage": "web/cc3200/views/storage.html"
+  },
+  "styles": [
+    "web/cc3200/console.css"
+  ],
+  "scripts": [
+    "EspSerial.js",
+    "SparseImage.js",
+    "web/cc3200/js/CC3200PacketAssembler.js",
+    "web/cc3200/js/CC3200Serial.js",
+    "web/cc3200/js/SffsFATParser.js",
+    "web/cc3200/js/SffsClient.js",
+    "web/cc3200/js/protocol.js",
+    "web/cc3200/js/helpers.js",
+    "web/cc3200/js/flash.js",
+    "web/cc3200/js/storage.js",
+    "web/cc3200/js/sffs.js",
+    "web/cc3200/js/commands.js",
+    "web/cc3200/js/tabs.js",
+    "web/cc3200/js/app.js"
+  ],
+  "output": "cc3200.html",
+  "staticOutput": "cc3200.static.html"
+}

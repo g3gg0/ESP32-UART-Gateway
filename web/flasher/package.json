@@ -1,0 +1,29 @@
+{
+  "template": "web/flasher/shell.html",
+  "views": {
+    "flash": "web/flasher/views/flash.html",
+    "config": "web/flasher/views/config.html"
+  },
+  "styles": [
+    "web/flasher/console.css"
+  ],
+  "scripts": [
+    "web/vendor/esp32-chips.js",
+    "web/vendor/esp32-flasher.js",
+    "EspSerial.js",
+    "web/flasher/js/firmware.js",
+    "web/flasher/js/flash.js",
+    "web/flasher/js/config.js",
+    "web/flasher/js/app.js"
+  ],
+  "output": "flasher.html",
+  "staticOutput": "flasher.static.html",
+  "vendor": {
+    "web/vendor/esp32-chips.js": "https://g3gg0.github.io/esp32_flasher/chips.js",
+    "web/vendor/esp32-flasher.js": "https://g3gg0.github.io/esp32_flasher/flasher.js"
+  },
+  "firmware": {
+    "buildManifest": "build/flasher_args.json",
+    "script": "web/flasher/js/firmware.js"
+  }
+}

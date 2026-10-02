@@ -1,0 +1,88 @@
+<div class="controls-section protocol-content" id="uartInteraction" style="padding: 12px;">
+                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                    <div class="proto-grid">
+                        <div>
+                            <label for="uartCfgRx">RX GPIO</label>
+                            <select id="uartCfgRx"></select>
+                        </div>
+                        <div>
+                            <label for="uartCfgTx">TX GPIO</label>
+                            <select id="uartCfgTx"></select>
+                        </div>
+                        <div>
+                            <label for="uartCfgBaud">Baud (kbit/s)</label>
+                            <select id="uartCfgBaud">
+                                <option value="300">300</option>
+                                <option value="600">600</option>
+                                <option value="1200">1200</option>
+                                <option value="2400">2400</option>
+                                <option value="4800">4800</option>
+                                <option value="9600">9600</option>
+                                <option value="19200">19200</option>
+                                <option value="38400">38400</option>
+                                <option value="57600">57600</option>
+                                <option value="115200" selected>115200</option>
+                                <option value="230400">230400</option>
+                                <option value="460800">460800</option>
+                                <option value="921600">921600</option>
+                            </select>
+                        </div>
+                        <!--button class="btn-secondary" id="uartReadCfgBtn" onclick="requestUartConfig()" disabled>Read Config</button>-->
+                        <button class="btn-primary" id="uartStartBtn" onclick="startUart()" disabled>Start</button>
+                    </div>
+
+                    <details class="collapsible-group">
+                        <summary>Advanced UART Config</summary>
+                        <div class="collapsible-body">
+                            <div class="proto-grid">
+                                <div>
+                                    <label for="uartCfgReset">Reset GPIO</label>
+                                    <select id="uartCfgReset"></select>
+                                </div>
+                                <div>
+                                    <label for="uartCfgControl">Control GPIO</label>
+                                    <select id="uartCfgControl"></select>
+                                </div>
+                                <div>
+                                    <label for="uartCfgLed">LED GPIO</label>
+                                    <select id="uartCfgLed"></select>
+                                </div>
+                                <div>
+                                    <label for="uartBreakLenInput">Break (ms)</label>
+                                    <input id="uartBreakLenInput" value="120" />
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="collapsible-group">
+                        <summary>UART Line Controls</summary>
+                        <div class="collapsible-body">
+                            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+                                <button class="btn-secondary" id="uartBreakBtn" onclick="sendUartBreak()" disabled>Send
+                                    Break</button>
+                                <button class="btn-secondary" id="uartResetLowBtn" onclick="setUartReset(false)"
+                                    disabled>Reset Low</button>
+                                <button class="btn-secondary" id="uartResetHighBtn" onclick="setUartReset(true)"
+                                    disabled>Reset High</button>
+                                <button class="btn-secondary" id="uartCtrlLowBtn" onclick="setUartControl(false)"
+                                    disabled>Control Low</button>
+                                <button class="btn-secondary" id="uartCtrlHighBtn" onclick="setUartControl(true)"
+                                    disabled>Control High</button>
+                            </div>
+                        </div>
+                    </details>
+                    <input id="breakLenInput" value="120" style="display:none;" />
+
+                    <div class="input-section">
+                        <input id="uartTxInput" placeholder="Type UART text payload" />
+                        <button class="btn-primary" id="uartSendBtn" onclick="sendUartText()" disabled>Send</button>
+                        <button class="btn-secondary" onclick="clearUartRx()">Clear RX</button>
+                    </div>
+                    <label style="display:flex; align-items:center; gap:8px; color:#9aa8b7; font-weight:700;">
+                        <input id="uartAppendNl" type="checkbox" checked />
+                        Append newline on send
+                    </label>
+                    <div class="uart-rx-display" id="uartRxDisplay"></div>
+                </div>
+            </div>

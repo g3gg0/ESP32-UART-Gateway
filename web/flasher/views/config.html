@@ -1,0 +1,151 @@
+<div id="configTool" class="tab-pane hidden">
+                <div class="section">
+                    <h2>📡 Configure Device</h2>
+                    <div class="status-box error" id="webSerialNoticeConfig" style="display: none;"></div>
+                    <button class="btn-primary" id="cfgConnectBtn" onclick="cfgConnectDevice()">Connect Device</button>
+                    <button class="btn-secondary" id="cfgDisconnectBtn" onclick="cfgDisconnectDevice()"
+                        style="display: none;">Disconnect</button>
+                    <div class="status-box" id="cfgStatusBox" style="display: none;">
+                        <span id="cfgStatusText" class="disconnected"></span>
+                    </div>
+                </div>
+
+                <div class="section" id="cfgConfigSection" style="display: none;">
+                    <div class="form-group">
+                        <label for="cfgBaudRate">Baud Rate</label>
+                        <select id="cfgBaudRate">
+                            <option value="300">300</option>
+                            <option value="600">600</option>
+                            <option value="1200">1200</option>
+                            <option value="2400">2400</option>
+                            <option value="4800">4800</option>
+                            <option value="9600">9600</option>
+                            <option value="19200">19200</option>
+                            <option value="38400">38400</option>
+                            <option value="57600">57600</option>
+                            <option value="115200" selected>115200</option>
+                            <option value="230400">230400</option>
+                            <option value="460800">460800</option>
+                            <option value="921600">921600</option>
+                        </select>
+                    </div>
+
+                    <div class="gpio-grid">
+                        <div class="form-group">
+                            <label for="cfgTxGpio">TX GPIO Pin</label>
+                            <select id="cfgTxGpio">
+                                <option value="0">GPIO 0</option>
+                                <option value="1">GPIO 1</option>
+                                <option value="2">GPIO 2</option>
+                                <option value="3">GPIO 3</option>
+                                <option value="4">GPIO 4</option>
+                                <option value="5">GPIO 5</option>
+                                <option value="6">GPIO 6</option>
+                                <option value="7">GPIO 7</option>
+                                <option value="8">GPIO 8</option>
+                                <option value="9">GPIO 9</option>
+                                <option value="10">GPIO 10</option>
+                                <option value="19">GPIO 19</option>
+                                <option value="20" selected>GPIO 20</option>
+                                <option value="21">GPIO 21</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cfgRxGpio">RX GPIO Pin</label>
+                            <select id="cfgRxGpio">
+                                <option value="0">GPIO 0</option>
+                                <option value="1">GPIO 1</option>
+                                <option value="2">GPIO 2</option>
+                                <option value="3">GPIO 3</option>
+                                <option value="4">GPIO 4</option>
+                                <option value="5">GPIO 5</option>
+                                <option value="6">GPIO 6</option>
+                                <option value="7">GPIO 7</option>
+                                <option value="8">GPIO 8</option>
+                                <option value="9">GPIO 9</option>
+                                <option value="10">GPIO 10</option>
+                                <option value="19">GPIO 19</option>
+                                <option value="20">GPIO 20</option>
+                                <option value="21" selected>GPIO 21</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cfgResetGpio">Reset GPIO Pin</label>
+                            <select id="cfgResetGpio">
+                                <option value="255">Unused</option>
+                                <option value="0">GPIO 0</option>
+                                <option value="1">GPIO 1</option>
+                                <option value="2">GPIO 2</option>
+                                <option value="3">GPIO 3</option>
+                                <option value="4">GPIO 4</option>
+                                <option value="5">GPIO 5</option>
+                                <option value="6">GPIO 6</option>
+                                <option value="7">GPIO 7</option>
+                                <option value="8">GPIO 8</option>
+                                <option value="9">GPIO 9</option>
+                                <option value="10" selected>GPIO 10</option>
+                                <option value="19">GPIO 19</option>
+                                <option value="20">GPIO 20</option>
+                                <option value="21">GPIO 21</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cfgControlGpio">Control GPIO Pin</label>
+                            <select id="cfgControlGpio">
+                                <option value="255">Unused</option>
+                                <option value="0">GPIO 0</option>
+                                <option value="1">GPIO 1</option>
+                                <option value="2">GPIO 2</option>
+                                <option value="3">GPIO 3</option>
+                                <option value="4">GPIO 4</option>
+                                <option value="5">GPIO 5</option>
+                                <option value="6">GPIO 6</option>
+                                <option value="7">GPIO 7</option>
+                                <option value="8">GPIO 8</option>
+                                <option value="9">GPIO 9</option>
+                                <option value="10">GPIO 10</option>
+                                <option value="19">GPIO 19</option>
+                                <option value="20">GPIO 20</option>
+                                <option value="21">GPIO 21</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cfgLedGpio">LED GPIO Pin</label>
+                            <select id="cfgLedGpio">
+                                <option value="255">Unused</option>
+                                <option value="0">GPIO 0</option>
+                                <option value="1">GPIO 1</option>
+                                <option value="2">GPIO 2</option>
+                                <option value="3">GPIO 3</option>
+                                <option value="4">GPIO 4</option>
+                                <option value="5">GPIO 5</option>
+                                <option value="6">GPIO 6</option>
+                                <option value="7">GPIO 7</option>
+                                <option value="8">GPIO 8</option>
+                                <option value="9">GPIO 9</option>
+                                <option value="10">GPIO 10</option>
+                                <option value="19">GPIO 19</option>
+                                <option value="20">GPIO 20</option>
+                                <option value="21">GPIO 21</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section" id="cfgActionsSection" style="display: none;">
+                    <div class="button-group">
+                        <button class="btn-primary" id="cfgSendBtn" onclick="cfgSendConfig()" disabled>Send
+                            Config</button>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="status-box" id="cfgReceivedConfigBox" style="display: none;">
+                        <span id="cfgReceivedConfigText"></span>
+                    </div>
+                </div>
+            </div>
