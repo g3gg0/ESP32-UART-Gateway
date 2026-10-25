@@ -29,6 +29,7 @@ The firmware has three modes on the USB-CDC port:
 
 1) **Simple USB UART bridge (default)**
 - Raw USB-CDC bytes are bridged to the target UART and back.
+- UART mode is selected at boot; receiving target data does not require a host configuration or mode command.
 - No framing/packet protocol is required.
 - In this mode the firmware watches the incoming stream for the extended-mode activation magic.
 - Replaces USB-UARTs, except RTS/DTR

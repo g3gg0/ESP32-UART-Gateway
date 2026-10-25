@@ -46,7 +46,7 @@ typedef enum
     UART_GW_MODE_CANON_EF_LENS = 4,
 } uart_gw_mode_t;
 
-static volatile uart_gw_mode_t current_mode = UART_GW_MODE_NONE;
+static volatile uart_gw_mode_t current_mode = UART_GW_MODE_UART;
 static volatile uint32_t send_message_suppress = 0;
 
 static void uart_gateway_switch_mode(uart_gw_mode_t new_mode)
