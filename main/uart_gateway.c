@@ -18,6 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/stream_buffer.h"
+#include "freertos/semphr.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #if CONFIG_GW_SWD_ENABLED
@@ -89,6 +90,9 @@ const uint8_t uart_extmode_magic[UART_EXTMODE_MAGIC_SIZE] = {
 /* CDC buffer for data flow */
 #define CDC_BUFFER_SIZE 64
 #define UART_BUFFER_SIZE 2048
+#define RAW_MAGIC_IDLE_MS 100
+
+static SemaphoreHandle_t cdc_to_uart_mutex;
 
 static TaskHandle_t cdc_read_task_handle = NULL;
 static TaskHandle_t cdc_write_task_handle = NULL;
@@ -135,10 +139,10 @@ void uart_gateway_handle_extended_packet(uint16_t packet_type, const uint8_t *pa
     switch (packet_type)
     {
     case UART_PACKET_TYPE_DATA:
-        if (current_mode == UART_GW_MODE_UART)
+        if (current_mode == UART_GW_MODE_UART && payload_len > 0)
         {
             led_signal_uart_activity();
-            uart_gateway_queue_cdc_data(payload, payload_len);
+            ESP_ERROR_CHECK(uart_gateway_queue_cdc_data(payload, payload_len));
         }
         break;
 
@@ -673,6 +677,12 @@ void uart_gateway_init(const uartgw_config_t *config)
 
     gateway_ctx.is_initializing = true;
 
+    if (cdc_to_uart_mutex == NULL)
+    {
+        cdc_to_uart_mutex = xSemaphoreCreateMutex();
+        ESP_ERROR_CHECK(cdc_to_uart_mutex ? ESP_OK : ESP_ERR_NO_MEM);
+    }
+
     /* Create stream buffers if not already created */
     if (gateway_ctx.cdc_to_uart_buffer == NULL)
     {
@@ -769,17 +779,16 @@ esp_err_t uart_gateway_send(const uint8_t *data, size_t length)
         return ESP_ERR_INVALID_ARG;
     }
 
-    int bytes_written = uart_write_bytes(gateway_ctx.uart_num, data, length);
-    if (bytes_written < 0)
+    size_t offset = 0;
+    while (offset < length)
     {
-        send_message("ERR: UART send: write failed (%d)", bytes_written);
-        return ESP_FAIL;
-    }
-
-    if (bytes_written != (int)length)
-    {
-        send_message("ERR: UART send: partial write %d/%zu", bytes_written, length);
-        return ESP_FAIL;
+        int bytes_written = uart_write_bytes(gateway_ctx.uart_num, data + offset, length - offset);
+        if (bytes_written <= 0)
+        {
+            send_message("ERR: UART send failed at %zu/%zu (%d)", offset, length, bytes_written);
+            return ESP_FAIL;
+        }
+        offset += bytes_written;
     }
 
     taskYIELD();
@@ -1018,21 +1027,29 @@ void uart_gateway_build_response_packet(uart_config_packet_t *pkt)
 /* Queue data from CDC to UART */
 esp_err_t uart_gateway_queue_cdc_data(const uint8_t *data, size_t length)
 {
-    if (gateway_ctx.cdc_to_uart_buffer == NULL || data == NULL || length == 0)
+    if (gateway_ctx.cdc_to_uart_buffer == NULL || cdc_to_uart_mutex == NULL || data == NULL || length == 0)
     {
         send_message("ERR: queue CDC: invalid args");
         return ESP_ERR_INVALID_ARG;
     }
 
-    size_t bytes_sent = xStreamBufferSend(gateway_ctx.cdc_to_uart_buffer, data, length, portMAX_DELAY);
-    if (bytes_sent == length)
+    // FreeRTOS stream buffers require serialization of multiple producers (USB/TCP).
+    xSemaphoreTake(cdc_to_uart_mutex, portMAX_DELAY);
+    size_t offset = 0;
+    while (offset < length)
     {
-        taskYIELD();
-        return ESP_OK;
+        size_t bytes_sent = xStreamBufferSend(gateway_ctx.cdc_to_uart_buffer, data + offset, length - offset, portMAX_DELAY);
+        if (bytes_sent == 0)
+        {
+            xSemaphoreGive(cdc_to_uart_mutex);
+            send_message("ERR: CDC->UART buffer stalled at %zu/%zu", offset, length);
+            return ESP_FAIL;
+        }
+        offset += bytes_sent;
     }
-
-    send_message("ERR: CDC->UART buffer: sent %zu/%zu", bytes_sent, length);
-    return ESP_FAIL;
+    xSemaphoreGive(cdc_to_uart_mutex);
+    taskYIELD();
+    return ESP_OK;
 }
 
 /* Receive data from CDC buffer (intended for UART) */
@@ -1112,6 +1129,8 @@ uart_packet_header_t *unqueue_packet(void)
 static void cdc_read_task(void *pvParameters)
 {
     int bytes_read;
+    int magic_check_pos = 0;
+    TickType_t last_raw_rx = 0;
 
     /* Extended mode state machine */
     uint8_t header_buffer[UART_PACKET_HEADER_SIZE];
@@ -1140,6 +1159,18 @@ static void cdc_read_task(void *pvParameters)
         /* Read from USB CDC with timeout */
         bytes_read = usb_serial_jtag_read_bytes(cdc_read_buffer, CDC_BUFFER_SIZE, pdMS_TO_TICKS(10));
 
+        TickType_t now = xTaskGetTickCount();
+        if (gateway_ctx.current_config.extended_mode == 0 && magic_check_pos > 0 &&
+            (TickType_t)(now - last_raw_rx) >= pdMS_TO_TICKS(RAW_MAGIC_IDLE_MS))
+        {
+            ESP_ERROR_CHECK(uart_gateway_queue_cdc_data(uart_extmode_magic, magic_check_pos));
+            magic_check_pos = 0;
+        }
+        if (bytes_read > 0)
+        {
+            last_raw_rx = now;
+        }
+
         if (bytes_read <= 0)
         {
             continue;
@@ -1155,7 +1186,6 @@ static void cdc_read_task(void *pvParameters)
         /* NORMAL MODE: search for magic bytes in incoming data */
         if (gateway_ctx.current_config.extended_mode == 0)
         {
-            static int magic_check_pos = 0;
             int bytes_to_send = 0;
 
             for(int in_byte_pos = 0; in_byte_pos < bytes_read; in_byte_pos++)
@@ -1167,7 +1197,7 @@ static void cdc_read_task(void *pvParameters)
                     if(bytes_to_send > 0)
                     {
                         led_signal_uart_activity();
-                        uart_gateway_queue_cdc_data(&cdc_read_buffer[in_byte_pos - bytes_to_send], bytes_to_send);
+                        ESP_ERROR_CHECK(uart_gateway_queue_cdc_data(&cdc_read_buffer[in_byte_pos - bytes_to_send], bytes_to_send));
                         bytes_to_send = 0;
                     }
 
@@ -1192,7 +1222,7 @@ static void cdc_read_task(void *pvParameters)
                     if(magic_check_pos > 0)
                     {
                         led_signal_uart_activity();
-                        uart_gateway_queue_cdc_data(uart_extmode_magic, magic_check_pos);
+                        ESP_ERROR_CHECK(uart_gateway_queue_cdc_data(uart_extmode_magic, magic_check_pos));
                         magic_check_pos = 0;
 
                         /* re-check this byte in case it's the start of the magic sequence */
@@ -1206,7 +1236,7 @@ static void cdc_read_task(void *pvParameters)
             if(bytes_to_send > 0)
             {
                 led_signal_uart_activity();
-                uart_gateway_queue_cdc_data(&cdc_read_buffer[bytes_read - bytes_to_send], bytes_to_send);
+                ESP_ERROR_CHECK(uart_gateway_queue_cdc_data(&cdc_read_buffer[bytes_read - bytes_to_send], bytes_to_send));
             }
         }
 
@@ -1328,7 +1358,7 @@ static void uart_write_task(void *pvParameters)
             continue;
         }
 
-        uart_gateway_send(uart_write_buffer, bytes_to_send);
+        ESP_ERROR_CHECK(uart_gateway_send(uart_write_buffer, bytes_to_send));
     }
 }
 
@@ -1389,6 +1419,27 @@ static void uart_read_task(void *pvParameters)
     }
 }
 
+static void cdc_write_all(const uint8_t *data, size_t length)
+{
+    size_t offset = 0;
+    while (offset < length)
+    {
+        size_t chunk = length - offset;
+        if (chunk > CDC_BUFFER_SIZE)
+        {
+            chunk = CDC_BUFFER_SIZE;
+        }
+        int written = usb_serial_jtag_write_bytes(data + offset, chunk, pdMS_TO_TICKS(1000));
+        ESP_ERROR_CHECK(written < 0 || written > (int)chunk ? ESP_FAIL : ESP_OK);
+        offset += written;
+        if (written == 0)
+        {
+            // A slow/disconnected host must not discard the unsent tail.
+            vTaskDelay(1);
+        }
+    }
+}
+
 /* Task: Write queued UART data to CDC */
 static void cdc_write_task(void *pvParameters)
 {
@@ -1397,7 +1448,6 @@ static void cdc_write_task(void *pvParameters)
     uint16_t packet_length;
     uint8_t *payload;
     size_t payload_len;
-    int written;
 
     /* Wait a bit for system to fully initialize */
     vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -1432,21 +1482,7 @@ static void cdc_write_task(void *pvParameters)
             if (packet_type == UART_PACKET_TYPE_DATA)
             {
                 led_signal_uart_activity();
-                size_t offset = 0;
-                while (offset < payload_len)
-                {
-                    size_t chunk = payload_len - offset;
-                    if (chunk > CDC_BUFFER_SIZE)
-                    {
-                        chunk = CDC_BUFFER_SIZE;
-                    }
-                    written = usb_serial_jtag_write_bytes(payload + offset, chunk, pdMS_TO_TICKS(1000));
-                    if (written != (int)chunk)
-                    {
-                        break;
-                    }
-                    offset += chunk;
-                }
+                cdc_write_all(payload, payload_len);
             }
         }
         else
@@ -1454,21 +1490,7 @@ static void cdc_write_task(void *pvParameters)
             /* Extended mode: send complete packet (header + payload) in fragments */
             const uint8_t *out = (const uint8_t *)packet_header;
             size_t out_len = packet_header->length;
-            size_t offset = 0;
-            while (offset < out_len)
-            {
-                size_t chunk = out_len - offset;
-                if (chunk > CDC_BUFFER_SIZE)
-                {
-                    chunk = CDC_BUFFER_SIZE;
-                }
-                written = usb_serial_jtag_write_bytes(out + offset, chunk, pdMS_TO_TICKS(1000));
-                if (written != (int)chunk)
-                {
-                    break;
-                }
-                offset += chunk;
-            }
+            cdc_write_all(out, out_len);
         }
 
         /* Free the allocated packet */

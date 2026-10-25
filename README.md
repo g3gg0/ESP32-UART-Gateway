@@ -32,6 +32,9 @@ The firmware has three modes on the USB-CDC port:
 - UART mode is selected at boot; receiving target data does not require a host configuration or mode command.
 - No framing/packet protocol is required.
 - In this mode the firmware watches the incoming stream for the extended-mode activation magic.
+- An incomplete magic prefix is forwarded after 100 ms without received data.
+  Split activation packets must arrive with less than 100 ms between chunks.
+  The complete activation sequence is still reserved, not transparent UART data.
 - Replaces USB-UARTs, except RTS/DTR
 
 2) **Extended mode (packet protocol + GPIO control)**
@@ -48,6 +51,31 @@ The firmware has three modes on the USB-CDC port:
 - Uses ESP32-C3 TWAI hardware directly (not UART bit-banging).
 
 ## Building
+The project-local `components/esp_driver_usb_serial_jtag/` overrides the ESP-IDF
+USB driver. It retains the upstream API and adds RX backpressure: when the RX
+ring cannot hold another 64-byte USB packet, the interrupt is masked without
+reading or acknowledging that packet. The full OUT endpoint then NAKs further
+transfers. Reading enough queued data re-enables the pending interrupt.
+Consequently a full UART stream queue blocks the USB reader and eventually
+throttles the USB host, rather than discarding received bytes. Host writes may
+complete in OS buffers before the target UART has physically transmitted them.
+No 64-byte host-side pacing workaround is required by this transport.
+
+USB/TCP producers serialize access to the UART stream buffer. Partial queue,
+UART and USB writes retain and retry the unsent suffix; USB TX timeouts preserve
+the packet instead of freeing its remainder. Without target-side UART flow
+control, the opposite direction (target UART to a stalled/disconnected USB host)
+can still overflow its finite UART receive buffers.
+
+Host regressions (C compiler required) exercise the production RX interrupt,
+read, raw-magic parser and write loops with mocked peripherals:
+```
+python3 tests/test_uart_flow.py
+```
+They cover a full 256-byte RX ring, pending packet retention, re-arming only
+after 64 bytes become free, a 64-KiB burst, magic-prefix expiry/fragmentation,
+and partial writes. Physical USB NAK timing must still be verified on hardware.
+
 The flasher sources live in `web/flasher/`. `python package_web.py` builds all
 three tools; `--config web/flasher/package.json` builds only the flasher, including
 firmware from the build manifest. See the [flasher source guide](web/flasher/README.md).
